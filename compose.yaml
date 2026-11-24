@@ -1,0 +1,38 @@
+# Runs the notes desk with its own PostgreSQL database:
+#   docker compose up --build      then open http://localhost:8000
+#   docker compose down            stop (the database is kept)
+#   docker compose down -v         stop and delete the database
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: notes
+      POSTGRES_PASSWORD: notes        # only reachable by the app container, never published
+      POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notes -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  app:
+    build: .
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PGHOST: db
+      PGUSER: notes
+      PGPASSWORD: notes
+      PGDATABASE: notes_desk
+    ports:
+      - "127.0.0.1:8000:8000"         # this computer only
+    volumes:                          # so price files, reports and exports show up in your folder
+      - ./feeds:/app/feeds
+      - ./reports:/app/reports
+      - ./export:/app/export
+
+volumes:
+  pgdata:

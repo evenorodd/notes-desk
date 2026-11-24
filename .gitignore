@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.zip
+export/
+reports/*
+!reports/.gitkeep
+.env

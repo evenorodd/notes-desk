@@ -1,0 +1,2 @@
+# Keep Unix line endings everywhere, so the CSVs and scripts behave the same on Windows.
+* text=auto eol=lf
