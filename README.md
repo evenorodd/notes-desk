@@ -144,10 +144,10 @@ password. If you've set `PGHOST` or `PGUSER` in your terminal, clear them with
 that Fedora rejects by default. The database is called `notes_desk` unless you
 set `PGDATABASE`.
 
-### 3. Unzip
+### 3. Get the code
 
 ```bash
-unzip notes_desk.zip && cd notes_desk
+git clone https://github.com/evenorodd/notes-desk.git && cd notes-desk
 python3 notes_desk.py test       # optional: unit tests run now; database tests need setup first
 ```
 
@@ -211,7 +211,15 @@ missing or unknown. A close more than 20% from the previous one doesn't stop the
 run, since real moves that size happen: it's loaded, an alert lists it, and the
 morning report opens with a "Prices to double-check" section. If one turns out
 to be wrong, fix the price file and rerun the date. Rerunning a date is safe: it
-replaces that date's results.
+replaces that date's results, including re-deciding any call or maturity that
+night (so a corrected price can undo a call that a bad one triggered). Notes
+called or matured on a later night still appear in an earlier night's results.
+If you correct an older night, rerun the nights after it in order too, since
+each night builds on the one before.
+
+A check date with no close (a market holiday) is taken at the next night's
+close, as the filings specify: each run applies every call and maturity check
+dated since the previous run.
 
 Setup rebuilds the database, so it reloads only the prices in `my_history.csv`;
 put any history you want to keep there. If setup says the database is open
@@ -440,7 +448,12 @@ them to Slack too, set `NOTES_DESK_SLACK_WEBHOOK` to a Slack incoming-webhook UR
 
 ## Simplifications
 
-- Market holidays aren't modelled.
+- There's no holiday calendar: a check on a market holiday is applied at the
+  next run, which is right as long as nights are run in order. Generated
+  schedules (`add-notes`) roll weekends but not holidays, so compare them with
+  the filing.
+- Concentration limits use notional (the client money committed to each
+  underlier), not market value, since there are no secondary-market prices.
 - Notes on more than one underlier ("worst-of") aren't supported.
 - Coupon payments, including memory coupons catching up, aren't tracked; the
   system flags coupon checks but doesn't record what was paid.

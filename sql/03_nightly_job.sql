@@ -40,8 +40,9 @@ create or replace function run_nightly(p_run_date date)
 returns table (step text, rows_affected bigint)
 language plpgsql as $$
 declare
-    n       bigint;
-    missing text;
+    n        bigint;
+    missing  text;
+    prev_run date;
 begin
     -- 1. Refuse to run on incomplete data. Using yesterday's prices silently
     --    is worse than not running at all.
@@ -53,8 +54,19 @@ begin
         raise exception 'Missing closing levels for % on %', missing, p_run_date;
     end if;
 
-    -- 2. Snapshot every live note against today's close.
-    --    Notes closed today are included so a rerun still sees them.
+    -- The last night that ran before this one. Check dates since then are due
+    -- tonight: a check that fell on a market holiday is taken at the next
+    -- close, as the filings say. On the very first run, only today's are due.
+    select max(run_date) into prev_run from note_daily_status where run_date < p_run_date;
+    prev_run := coalesce(prev_run, p_run_date - 1);
+
+    -- A rerun re-decides tonight's calls and maturities from scratch, so a
+    -- corrected price can undo (or make) a call. Notes closed on a later night
+    -- stay closed: rerun later nights in order to replay those.
+    update notes set status = 'live', closed_date = null where closed_date = p_run_date;
+
+    -- 2. Snapshot every note that was open on this date: live ones, plus any
+    --    closed on a later night (so rerunning an old date still shows them).
     delete from note_daily_status where run_date = p_run_date;
     insert into note_daily_status (run_date, note_id, index_level, perf, cushion, coupon_cushion,
                                    dist_to_call, payout_per_1000)
@@ -67,17 +79,17 @@ begin
            note_payout_per_1000(nt, m.close)
     from notes nt
     join market_data m on m.index_code = nt.index_code and m.price_date = p_run_date
-    where nt.status = 'live' or nt.closed_date = p_run_date;
+    where nt.closed_date is null or nt.closed_date > p_run_date;
     get diagnostics n = row_count;
     step := 'notes valued'; rows_affected := n; return next;
 
-    -- 3. Apply today's observations: calls and maturities.
+    -- 3. Apply the calls and maturities due tonight (since the last run).
     update notes nt
     set status = 'called', closed_date = p_run_date
     from observation_dates o
     join note_daily_status s on s.note_id = o.note_id and s.run_date = p_run_date
-    where o.note_id = nt.note_id and o.obs_date = p_run_date and o.kind = 'call'
-      and s.dist_to_call >= 0 and nt.status = 'live';
+    where o.note_id = nt.note_id and o.obs_date > prev_run and o.obs_date <= p_run_date
+      and o.kind = 'call' and s.dist_to_call >= 0 and nt.status = 'live';
     get diagnostics n = row_count;
     step := 'notes called today'; rows_affected := n; return next;
 
@@ -86,8 +98,8 @@ begin
     update notes nt
     set status = 'matured', closed_date = p_run_date
     from observation_dates o
-    where o.note_id = nt.note_id and o.obs_date = p_run_date and o.kind = 'maturity'
-      and nt.status = 'live';
+    where o.note_id = nt.note_id and o.obs_date > prev_run and o.obs_date <= p_run_date
+      and o.kind = 'maturity' and nt.status = 'live';
     get diagnostics n = row_count;
     step := 'notes matured today'; rows_affected := n; return next;
 
@@ -105,7 +117,8 @@ begin
                end as flag,
                (select sum(h.notional) from holdings h where h.note_id = o.note_id) as notional
         from observation_dates o
-        join notes nt on nt.note_id = o.note_id and nt.status = 'live'
+        join notes nt on nt.note_id = o.note_id
+                     and (nt.closed_date is null or nt.closed_date > p_run_date)
         join note_daily_status s on s.note_id = o.note_id and s.run_date = p_run_date
         where o.obs_date > p_run_date and o.obs_date <= p_run_date + 30
     ) e
@@ -121,12 +134,15 @@ begin
     from notes nt
     join note_daily_status s on s.note_id = nt.note_id and s.run_date = p_run_date
     join observation_dates o on o.note_id = nt.note_id and o.kind = 'maturity'
-    where nt.status = 'live' and s.cushion < 0 and o.obs_date > p_run_date + 30
+    where (nt.closed_date is null or nt.closed_date > p_run_date)
+      and s.cushion < 0 and o.obs_date > p_run_date + 30
       and exists (select 1 from holdings h where h.note_id = nt.note_id);
     get diagnostics n = row_count;
     step := 'notes below protection'; rows_affected := n; return next;
 
     -- 5. Concentration: each advisor's exposure to each index vs. their limit.
+    --    Exposure is notional (the client money committed to that underlier),
+    --    not market value: this demo has no secondary-market prices.
     delete from concentration_breaches where run_date = p_run_date;
     insert into concentration_breaches (run_date, advisor_id, index_code, exposure, pct, limit_pct)
     select p_run_date, x.advisor_id, x.index_code, x.amt, x.amt / x.total, ad.max_index_pct
@@ -136,7 +152,7 @@ begin
         from holdings h
         join accounts a using (account_id)
         join notes nt using (note_id)
-        where nt.status = 'live'
+        where nt.closed_date is null or nt.closed_date > p_run_date
         group by a.advisor_id, nt.index_code
     ) x
     join advisors ad using (advisor_id)

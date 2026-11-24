@@ -14,6 +14,14 @@ select note_id, d::date, 'call' from notes,
 insert into holdings (account_id, note_id, notional)
 select 1, note_id, 250000 from notes where cusip = 'TEST00001';
 
+-- A second note whose only call date, Jan 18 2027, is Martin Luther King Day:
+-- no close that day, so the check must be taken at the next close (Jan 19).
+insert into notes (cusip, issuer_id, index_code, note_type, trade_date, maturity_date,
+                   initial_level, coupon_rate, barrier_pct, autocall_pct)
+values ('TEST00002', 1, 'TEST', 'income', '2026-01-02', '2027-12-31', 100, 0.10, 0.70, 1.00);
+insert into observation_dates (note_id, obs_date, kind)
+select note_id, '2027-01-18', 'call' from notes where cusip = 'TEST00002';
+
 -- Give every index a close on the test dates (real indices just repeat their last close).
 insert into market_data (index_code, price_date, close)
 select i.index_code, v.d::date,
@@ -22,7 +30,7 @@ select i.index_code, v.d::date,
                            order by price_date desc limit 1),
                           (select max(initial_level) from notes n where n.index_code = i.index_code)) end
 from indices i,
-     (values ('2027-01-01', 77.0), ('2027-01-04', 103.0)) v(d, lvl)
+     (values ('2027-01-01', 77.0), ('2027-01-04', 103.0), ('2027-01-19', 105.0)) v(d, lvl)
 on conflict do nothing;
 
 do $$
@@ -60,6 +68,31 @@ begin
     assert not exists (select 1 from events ev join notes n using (note_id)
                        where n.cusip = 'TEST00001' and ev.run_date = '2027-01-04'),
            'a called note should have no upcoming events';
+
+    -- Rerunning an earlier night after the call keeps the called note in it.
+    perform run_nightly('2027-01-01');
+    assert exists (select 1 from note_daily_status ns join notes n using (note_id)
+                   where n.cusip = 'TEST00001' and ns.run_date = '2027-01-01'),
+           'rerunning Jan 1 after the Jan 4 call dropped the note';
+    select status into st from notes where cusip = 'TEST00001';
+    assert st = 'called', format('rerunning an earlier night undid a later call: %s', st);
+
+    -- Correcting the call date's price and rerunning it re-decides the call.
+    update market_data set close = 95 where index_code = 'TEST' and price_date = '2027-01-04';
+    perform run_nightly('2027-01-04');
+    select status into st from notes where cusip = 'TEST00001';
+    assert st = 'live', format('a corrected price below the trigger should undo the call, status is %s', st);
+    update market_data set close = 103 where index_code = 'TEST' and price_date = '2027-01-04';
+    perform run_nightly('2027-01-04');
+    select status into st from notes where cusip = 'TEST00001';
+    assert st = 'called', format('restoring the price should call it again, status is %s', st);
+
+    -- The holiday check: no run on Jan 18, so the Jan 19 run takes it at 105.
+    perform run_nightly('2027-01-19');
+    select status into st from notes where cusip = 'TEST00002';
+    assert st = 'called', format('a call date on a holiday should be taken at the next close, status is %s', st);
+    assert (select closed_date from notes where cusip = 'TEST00002') = '2027-01-19',
+           'the holiday call should be recorded on the day it was observed';
 
     -- Missing market data must stop the job rather than produce numbers.
     begin
