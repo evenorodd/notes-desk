@@ -8,6 +8,7 @@
     python3 notes_desk.py nightly --fetch           fetch today's closes and run, in one step
     python3 notes_desk.py add-notes new_notes.csv   add notes, building their check dates
     python3 notes_desk.py serve                     open the notes desk in your browser (http://localhost:8000)
+    python3 notes_desk.py mcp                       serve read-only tools to AI assistants (MCP)
     python3 notes_desk.py export                    save the website as files to share (export/)
     python3 notes_desk.py what-if                   example payouts and flags (changes nothing)
     python3 notes_desk.py test                      run the tests (changes nothing)

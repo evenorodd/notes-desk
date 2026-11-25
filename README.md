@@ -52,6 +52,7 @@ python3 notes_desk.py nightly --fetch             # fetch today's closes and run
 python3 notes_desk.py add-notes new_notes.csv     # add notes, building their check dates
 python3 notes_desk.py serve                       # the website, at http://localhost:8000
 python3 notes_desk.py export                      # save the website as files to share
+python3 notes_desk.py mcp                         # tools for AI assistants (see "Ask Claude about the book")
 python3 notes_desk.py what-if                     # example payouts and flags (changes nothing)
 python3 notes_desk.py test                        # run the tests (changes nothing)
 ```
@@ -495,3 +496,86 @@ in any browser: sorting, filters, charts and the payout calculator all work,
 with no server or database. Zip the folder to share it. Each export replaces
 the folder's contents. The code is in
 `desk/web.py`.
+
+## Ask Claude about the book (MCP)
+
+`python3 notes_desk.py mcp` is an **MCP server**: it lets an AI assistant such
+as Claude Desktop or Claude Code answer questions about the book in plain
+English, using the app's own numbers. For example:
+
+- "Which Nasdaq-100 notes are below their buffer, and how far?"
+- "What does 46661MLN2 pay if the Nasdaq falls another 10% from here?"
+- "Summarize last night for an advisor in three sentences."
+- "Which notes have a coupon at risk in the next 30 days?"
+
+**The tools** (in `desk/tools.py`): `book_summary`, `find_notes`, `get_note`,
+`payout_at_moves`, `upcoming_events`, `price_history` and `run_history`.
+
+**Guardrails:**
+
+- **Read-only:** every tool runs on a database connection where PostgreSQL
+  itself refuses writes. The assistant can't change notes, prices or results.
+- **No invented numbers:** payouts come from `note_payout_per_1000()`, the same
+  function the nightly job uses, and the server tells the assistant to take
+  every number from a tool.
+- **Sources:** `get_note` returns the note's SEC filing link, so answers can
+  cite it.
+
+The server speaks MCP over standard input and output with Python's standard
+library, so there's nothing to install. Your MCP client starts it; you don't
+run it yourself.
+
+### Claude Code
+
+```bash
+claude mcp add --transport stdio notes-desk -- python3 /full/path/to/notes_desk/notes_desk.py mcp
+claude mcp list        # should show notes-desk as connected
+```
+
+Then start `claude` and ask away (`/mcp` shows the server and its tools).
+
+### Claude Desktop (Mac, Windows, Linux)
+
+In Claude Desktop: **Settings → Developer → Edit Config**, and add (with your
+own full path):
+
+```json
+{
+  "mcpServers": {
+    "notes-desk": {
+      "command": "python3",
+      "args": ["/full/path/to/notes_desk/notes_desk.py", "mcp"]
+    }
+  }
+}
+```
+
+Quit Claude Desktop completely and start it again. The tools appear under
+**Connectors** in the chat box's "+" menu.
+
+### Using the Docker copy instead
+
+With `docker compose up` running, point the client at the container. The
+`-T` matters: it gives the server plain input and output instead of a terminal.
+
+```json
+{
+  "mcpServers": {
+    "notes-desk": {
+      "command": "docker",
+      "args": ["compose", "-f", "/full/path/to/notes-desk/compose.yaml",
+               "exec", "-T", "app", "python3", "notes_desk.py", "mcp"]
+    }
+  }
+}
+```
+
+On a Mac, if Claude Desktop says it can't find `docker`, use its full path,
+`/usr/local/bin/docker`.
+
+### Other agent frameworks
+
+The tools don't depend on MCP: `desk/tools.py` has each tool's name,
+description, JSON Schema and Python function in `TOOLS`, and `tools.call(name,
+arguments)` runs one. A framework with its own tool system needs only a thin
+wrapper around those.

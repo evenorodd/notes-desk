@@ -28,7 +28,7 @@ README.md has the full step-by-step guide.
 | `my_history.csv` | One earlier close per underlier, so the first night has something to compare against | Rarely |
 | `feeds/` | One price file per night, `closes_DATE.csv`, which also serves as a record of what was loaded | Only to fix a bad price |
 | `reports/` | The output: the morning report and the every-note CSV for each night | No, you read these |
-| `desk/` | The Python code, one file per command | No |
+| `desk/` | The Python code, one file per command (`tools.py` and `mcp_server.py` are the AI assistant's tools) | No |
 | `sql/` | Builds the database (the tables) and holds the nightly valuation logic | No |
 | `tests/` | Checks the logic still works | No |
 | `notes_desk.py` | The one file you run | No |
@@ -43,6 +43,7 @@ README.md has the full step-by-step guide.
 | `fetch-prices` / `price-template` | Get a night's prices on their own (downloaded, or a blank file to type in). |
 | `add-notes FILE` | When new notes are bought. |
 | `serve` | Opens the notes desk in your web browser at http://localhost:8000: dashboard, every note, one page per note, run history. |
+| `mcp` | Lets an AI assistant (Claude Desktop, Claude Code) answer questions about the book, read-only. |
 | `export` | Saves the website for one night as plain HTML files in `export/`, to share. |
 | `what-if` / `test` | To explore payouts or check the logic. They change nothing. |
 

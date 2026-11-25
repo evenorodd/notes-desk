@@ -64,6 +64,10 @@ def main(argv=None):
     s.add_argument("--host", default="127.0.0.1",
                    help="address to listen on (default: 127.0.0.1, this computer only; Docker uses 0.0.0.0)")
 
+    sub.add_parser("mcp", help="serve read-only tools to AI assistants over MCP (stdin/stdout)",
+                   description="Runs an MCP server on standard input and output, for Claude Desktop, "
+                               "Claude Code and other MCP clients. Your MCP client starts this; see README.md.")
+
     s = sub.add_parser("export", help="save the website as plain HTML files to share",
                        description="Writes the dashboard, the notes table and every note's page for one night "
                                    "to export/, as files that open in any browser with no server or database.")
@@ -100,6 +104,9 @@ def main(argv=None):
         elif args.command == "serve":
             from .web import serve
             serve(args.port, args.host)
+        elif args.command == "mcp":
+            from .mcp_server import main as mcp_main
+            mcp_main()
         elif args.command == "export":
             from .web import export
             export(args.date)
