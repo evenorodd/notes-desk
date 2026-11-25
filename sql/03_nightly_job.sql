@@ -60,10 +60,11 @@ begin
     select max(run_date) into prev_run from note_daily_status where run_date < p_run_date;
     prev_run := coalesce(prev_run, p_run_date - 1);
 
-    -- A rerun re-decides tonight's calls and maturities from scratch, so a
-    -- corrected price can undo (or make) a call. Notes closed on a later night
-    -- stay closed: rerun later nights in order to replay those.
-    update notes set status = 'live', closed_date = null where closed_date = p_run_date;
+    -- A rerun re-decides calls and maturities from scratch, so a corrected
+    -- price can undo (or make) a call. Closes on later nights are undone too,
+    -- since tonight may now close the note first: replay_later_nights() then
+    -- reruns those nights in order to decide them again.
+    update notes set status = 'live', closed_date = null where closed_date >= p_run_date;
 
     -- 2. Snapshot every note that was open on this date: live ones, plus any
     --    closed on a later night (so rerunning an old date still shows them).
@@ -159,5 +160,24 @@ begin
     where x.amt / x.total > ad.max_index_pct;
     get diagnostics n = row_count;
     step := 'concentration breaches'; rows_affected := n; return next;
+end;
+$$;
+
+
+-- After rerunning an earlier night, rerun every later night in date order from
+-- the prices already stored, so each call and maturity lands on the first
+-- night that triggers it. Returns how many nights were replayed.
+create or replace function replay_later_nights(p_run_date date) returns int
+language plpgsql as $$
+declare
+    nights date[];
+    d      date;
+begin
+    select coalesce(array_agg(distinct run_date order by run_date), '{}') into nights
+    from note_daily_status where run_date > p_run_date;
+    foreach d in array nights loop
+        perform run_nightly(d);
+    end loop;
+    return cardinality(nights);
 end;
 $$;

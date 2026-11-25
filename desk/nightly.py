@@ -102,6 +102,9 @@ def run(run_date, fetch=False):
         log(run_date, "running nightly job")
         try:
             headers, steps = db.query(conn, "select * from run_nightly(%s)", (run_date,))
+            later = [r[0] for r in db.rows(conn, """select distinct run_date from note_daily_status
+                                                     where run_date > %s order by 1""", (run_date,))]
+            db.scalar(conn, "select replay_later_nights(%s)", (run_date,))
         except Exception as e:
             if not db.is_db_error(e):
                 raise
@@ -110,6 +113,13 @@ def run(run_date, fetch=False):
         print(table(headers, steps))
 
         morning, notes = report.write_reports(conn, run_date)
+        if later:
+            # An earlier night was rerun: the later nights were replayed on top
+            # of it, so their reports are rewritten too.
+            for d in later:
+                report.write_reports(conn, d)
+            log(run_date, f"replayed {len(later)} later night(s) so calls and maturities stay right: "
+                          + ", ".join(str(d) for d in later))
         warning = None
         if moves:
             warning = ("loaded, but these moved more than 20% in a day. Check them against another "

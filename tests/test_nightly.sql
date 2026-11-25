@@ -71,6 +71,7 @@ begin
 
     -- Rerunning an earlier night after the call keeps the called note in it.
     perform run_nightly('2027-01-01');
+    perform replay_later_nights('2027-01-01');
     assert exists (select 1 from note_daily_status ns join notes n using (note_id)
                    where n.cusip = 'TEST00001' and ns.run_date = '2027-01-01'),
            'rerunning Jan 1 after the Jan 4 call dropped the note';
@@ -93,6 +94,25 @@ begin
     assert st = 'called', format('a call date on a holiday should be taken at the next close, status is %s', st);
     assert (select closed_date from notes where cusip = 'TEST00002') = '2027-01-19',
            'the holiday call should be recorded on the day it was observed';
+
+    -- Corrections replay later nights. TEST00001 has call dates Jan 4 and Jan 15.
+    -- With Jan 4 corrected below the trigger, it is no longer called on Jan 4;
+    -- the replayed Jan 19 run takes the Jan 15 check (no close that day) at 105.
+    update market_data set close = 95 where index_code = 'TEST' and price_date = '2027-01-04';
+    perform run_nightly('2027-01-04');
+    perform replay_later_nights('2027-01-04');
+    assert (select closed_date from notes where cusip = 'TEST00001') = '2027-01-19',
+           'with Jan 4 below the trigger, the note should be called at the Jan 19 replay';
+    -- Now the reverse: it was called on the later night, but a corrected price
+    -- on the earlier night means it should have been called then.
+    update market_data set close = 103 where index_code = 'TEST' and price_date = '2027-01-04';
+    perform run_nightly('2027-01-04');
+    perform replay_later_nights('2027-01-04');
+    assert (select closed_date from notes where cusip = 'TEST00001') = '2027-01-04',
+           format('the note should be called on Jan 4, not %s',
+                  (select closed_date from notes where cusip = 'TEST00001'));
+    assert (select closed_date from notes where cusip = 'TEST00002') = '2027-01-19',
+           'replaying Jan 19 should call TEST00002 there again';
 
     -- Missing market data must stop the job rather than produce numbers.
     begin

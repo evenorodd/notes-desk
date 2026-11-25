@@ -214,8 +214,10 @@ to be wrong, fix the price file and rerun the date. Rerunning a date is safe: it
 replaces that date's results, including re-deciding any call or maturity that
 night (so a corrected price can undo a call that a bad one triggered). Notes
 called or matured on a later night still appear in an earlier night's results.
-If you correct an older night, rerun the nights after it in order too, since
-each night builds on the one before.
+Rerunning an older night also replays every later night automatically, from
+the prices already loaded, and rewrites their reports: a corrected price can
+move a call to an earlier night, and the later nights are decided again on top
+of it.
 
 A check date with no close (a market holiday) is taken at the next night's
 close, as the filings specify: each run applies every call and maturity check
