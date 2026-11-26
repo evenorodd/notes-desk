@@ -145,6 +145,7 @@ nav a:hover { text-decoration: none; color: var(--text); }
 .wrap { max-width: 1320px; margin: 0 auto; padding: 0 20px; }
 main.wrap { padding-top: 22px; padding-bottom: 60px; }
 #notes th, #notes td { padding: 6px 7px; font-size: 13px; }
+#notes th { white-space: normal; vertical-align: bottom; }
 h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
 h2 { font-size: 15px; margin: 0 0 10px; }
 .sub { color: var(--muted); margin: 0 0 18px; }
@@ -237,7 +238,8 @@ document.querySelectorAll('table.sortable').forEach(function (t) {
         var x = a.cells[i].dataset.v, y = b.cells[i].dataset.v;
         if (x === '' && y === '') return 0; if (x === '') return 1; if (y === '') return -1;
         var nx = parseFloat(x), ny = parseFloat(y), c;
-        if (!isNaN(nx) && !isNaN(ny) && /^[-+0-9.eE]+$/.test(x) && /^[-+0-9.eE]+$/.test(y)) c = nx - ny;
+        var isNum = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;   // a real number, not a date like 2026-09-30
+        if (isNum.test(x) && isNum.test(y)) c = nx - ny;
         else c = x < y ? -1 : x > y ? 1 : 0;
         return asc ? c : -c;
       });
@@ -458,7 +460,8 @@ def notes_page(conn, query):
                n.status
         from notes n join issuers i using (issuer_id)
         left join note_daily_status s on s.note_id = n.note_id and s.run_date = %s
-        order by s.cushion nulls last, n.cusip""", (d, d))
+        where %s::date is null or n.trade_date <= %s::date   -- only notes in the book that night
+        order by s.cushion nulls last, n.cusip""", (d, d, d, d))
     pick_u = (query.get("u") or [""])[0]
     pick_t = (query.get("type") or [""])[0]
     underliers = sorted({r[3] for r in rows})
@@ -473,6 +476,7 @@ def notes_page(conn, query):
                           + ("" if status == "live" else " " + chip(status, "good")), c)
                    + cell(esc(issuer.replace(" Financial Company LLC", "").replace(", Inc.", "")), issuer)
                    + cell(esc(TYPE_LABELS.get(t, t)), t) + cell(esc(u), u)
+                   + cell(str(td), td)
                    + cell(num(init), init, "n") + cell(num(close), close, "n")
                    + cell(pct(perf, True), perf, "n")
                    + cell(f'<span class="t-{tone(cu)}">{pct(cu, True)}</span>' if cu is not None else "—", cu, "n")
@@ -485,7 +489,7 @@ def notes_page(conn, query):
         f'<option value="{esc(t)}"{" selected" if t == pick_t else ""}>{esc(TYPE_LABELS.get(t, t))}</option>' for t in types)
     uopts = '<option value="">All underliers</option>' + "".join(
         f'<option value="{esc(u)}"{" selected" if u == pick_u else ""}>{esc(u)}</option>' for u in underliers)
-    head = ["CUSIP", "Issuer", "Type", "Linked to", "Start level", "Close", "Since start", "Cushion",
+    head = ["CUSIP", "Issuer", "Type", "Linked to", "Start date", "Start level", "Close", "Since start", "Cushion",
             "Coupon cushion", "Vs call", "Per $1,000", "Next check", "Matures"]
     body = f"""<h1>Notes</h1>
 <p class="sub">{f"Values from the night of {d}." if d else "No nightly runs yet, so values are blank."}
@@ -500,7 +504,7 @@ Click a column to sort. Click a CUSIP for the full picture.</p>
   <span id="count" class="note" style="margin:0 0 0 auto"></span>
 </form>
 <div class="scroll"><table id="notes" class="sortable"><thead><tr>
-{"".join(f'<th class="{"n" if 4 <= i <= 10 else ""}">{h}</th>' for i, h in enumerate(head))}
+{"".join(f'<th class="{"n" if 5 <= i <= 11 else ""}">{h}</th>' for i, h in enumerate(head))}
 </tr></thead><tbody>{"".join(trs)}</tbody></table></div></div>"""
     return page("Notes", body, "notes", NOTES_FILTER_JS)
 
@@ -757,18 +761,28 @@ def note_page(conn, cusip, query):
 # --- runs --------------------------------------------------------------------
 
 def runs_page(conn, result=None):
-    rows = db.rows(conn, """select run_id, run_date, to_char(started_at, 'YYYY-MM-DD HH24:MI'),
-                                   extract(epoch from finished_at - started_at)::float, status, message
-                            from job_runs order by run_id desc limit 100""")
+    # One row per night: its latest run, and how many times it has run.
+    rows = db.rows(conn, """
+        select distinct on (run_date) run_date, run_id, to_char(started_at, 'YYYY-MM-DD HH24:MI'),
+               extract(epoch from finished_at - started_at)::float, status, message,
+               count(*) over (partition by run_date)
+        from job_runs order by run_date desc, run_id desc""")
     trs = []
-    for rid, rd, started, took, status, msg in rows:
+    for rd, rid, started, took, status, msg, attempts in rows:
         kind = {"ok": "warn" if msg else "good", "failed": "bad"}.get(status, "neutral")
         label = "ok, with warnings" if status == "ok" and msg else status
-        trs.append("<tr>" + cell(str(rid), rid, "n") + cell(f'<a href="/?date={rd}">{rd}</a>', rd)
+        trs.append("<tr>" + cell(f'<a href="/?date={rd}">{rd}</a>', rd)
+                   + cell(chip(label, kind), status)
                    + cell(esc(started), started)
                    + cell(f"{float(took):.1f}s" if took is not None else "", took, "n")
-                   + cell(chip(label, kind), status)
-                   + f'<td style="white-space:pre-wrap;max-width:560px">{esc(msg)}</td></tr>')
+                   + cell(str(attempts), attempts, "n") + cell(str(rid), rid, "n")
+                   + f'<td style="white-space:pre-wrap;max-width:520px">{esc(msg)}</td></tr>')
+    counts = db.rows(conn, """
+        select count(distinct run_date),
+               count(distinct run_date) filter (where status = 'failed' and not exists (
+                   select 1 from job_runs j2 where j2.run_date = job_runs.run_date and j2.run_id > job_runs.run_id)),
+               min(run_date), max(run_date)
+        from job_runs""")[0]
     loads = db.rows(conn, """select run_date, filename, row_count, to_char(loaded_at, 'YYYY-MM-DD HH24:MI')
                              from feed_loads order by load_id desc limit 20""")
     lrows = ["<tr>" + cell(str(r), r) + cell(f'<span class="mono">{esc(str(f).split("/")[-1])}</span>', f)
@@ -793,7 +807,9 @@ def runs_page(conn, result=None):
 <p class="sub">{"Every nightly run in the database when this snapshot was made." if STATIC["on"] else "Every nightly run, whether it came from cron, the command line or this page."}</p>
 {res}
 {run_form}
-<div class="panel"><h2>Run history</h2>{table_html(["Run", "Night", "Started", "Took", "Status", "Message"], trs, numeric={0, 3})}</div>
+<div class="panel"><h2>Run history</h2>
+<p class="note">{counts[0]} nights{f", {counts[2]} to {counts[3]}" if counts[0] else ""}. Each night's latest run; "Runs" counts how many times it has been run (backfills and reruns add to it).{f" {counts[1]} night(s) whose latest run failed." if counts[1] else ""}</p>
+<div style="max-height:560px;overflow:auto">{table_html(["Night", "Status", "Last run", "Took", "Runs", "Run #", "Message"], trs, numeric={3, 4, 5})}</div></div>
 <div class="panel"><h2>Price files loaded</h2>{table_html(["Night", "File", "Rows", "Loaded"], lrows, numeric={2})}</div>"""
     return page("Runs", body, "runs")
 
