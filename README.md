@@ -15,7 +15,8 @@ folders, commands, tables and reports, with a diagram.
 The easiest way to run it: nothing to install but Docker.
 
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and start it.
-2. Get the code and start it:
+2. Get the code (see [Getting and updating the code](#getting-and-updating-the-code)
+   for Git on Windows, Mac and Linux), then start it from the project folder:
    ```bash
    git clone https://github.com/evenorodd/notes-desk.git
    cd notes-desk
@@ -48,16 +49,81 @@ docker compose exec app python3 notes_desk.py nightly --fetch  # today's closes,
 ```
 
 Then refresh http://localhost:8000, or open the new file in `reports/`. "Today"
-means today in New York, whatever your computer's time zone. To pick up price
-files someone else added to the repository instead, get the new files
-(`git pull`, or download the ZIP again over your folder) and run the job for
-each new date, oldest first: `docker compose exec app python3 notes_desk.py
-nightly 2026-11-25`.
+means today in New York, whatever your computer's time zone. To pick up new
+code and price files from GitHub instead, see
+[Updating](#3-updating-to-the-latest-version).
 
 To schedule it on Windows, create a Task Scheduler task for weekdays at 6:15
 pm Eastern that runs `docker` with the arguments
 `compose -f C:\path\to\notes-desk\compose.yaml exec -T app python3 notes_desk.py nightly --fetch`
 (Docker Desktop must be running).
+
+## Getting and updating the code
+
+The code lives at **https://github.com/evenorodd/notes-desk**. Git gets it
+once and then updates it in place with one command. That matters with Docker:
+it names the app after its folder, so a fresh copy in a new folder starts with
+a new, empty database instead of carrying on.
+
+### 1. Install Git (once)
+
+| System | How |
+|---|---|
+| **Windows** | In PowerShell: `winget install --id Git.Git -e`, or the installer from [git-scm.com](https://git-scm.com/download/win) with its default options. Then close and reopen PowerShell. |
+| **Mac** | In Terminal, type `git --version`. If Git isn't there, macOS offers to install the Command Line Developer Tools, which include it. (Or `brew install git` if you use Homebrew.) |
+| **Linux** | Fedora: `sudo dnf install git`. Ubuntu or Debian: `sudo apt install git`. |
+
+Check with `git --version`.
+
+Prefer buttons to commands? [GitHub Desktop](https://desktop.github.com/) (Windows
+and Mac) does the same: **File → Clone repository → URL** to get the code, and
+**Fetch origin**, then **Pull origin**, to update. The Docker commands below
+still run in a terminal.
+
+### 2. Get the code (once)
+
+Open a terminal where you want the project (PowerShell on Windows, Terminal on
+a Mac) and run:
+
+```bash
+git clone https://github.com/evenorodd/notes-desk.git
+cd notes-desk
+```
+
+This makes a `notes-desk` folder. Run every other command from inside it. On
+Windows, a quick way to open PowerShell there later is to type `powershell` in
+File Explorer's address bar while in the folder.
+
+### 3. Updating to the latest version
+
+From the project folder:
+
+```bash
+git pull                                                        # new code and price files
+docker compose up --build -d                                    # rebuild the app with the new code
+docker compose exec app python3 notes_desk.py backfill --no-download   # load any new nights
+```
+
+- `git pull` downloads only what changed. Your database, reports and anything
+  you've run locally are untouched.
+- `--build` is needed because the container runs a copy of the code made when
+  it was built; the database is kept.
+- `backfill --no-download` replays every night from the price files in
+  `feeds/`, so nights added on GitHub show up. It takes seconds and is safe to
+  repeat.
+
+**Without Docker,** it's `git pull`, then restart `serve` if it's running, and
+run `python3 notes_desk.py backfill --no-download` for new price files. The
+nightly job reloads its database logic itself, so no setup is needed after an
+update.
+
+**Without Git** (not recommended): on the GitHub page, **Code → Download ZIP**,
+and unzip it **over your existing folder** each time. Unzipping into a new
+folder gives Docker a new, empty database.
+
+If `git pull` says your local changes would be overwritten, you've edited a
+file that the update also changes. `git stash` sets your edits aside, then
+`git pull` again (`git stash pop` brings your edits back).
 
 ## Running it without Docker
 
@@ -169,6 +235,9 @@ that Fedora rejects by default. The database is called `notes_desk` unless you
 set `PGDATABASE`.
 
 ### 3. Get the code
+
+See [Getting and updating the code](#getting-and-updating-the-code) for
+installing Git on your system. Then:
 
 ```bash
 git clone https://github.com/evenorodd/notes-desk.git && cd notes-desk

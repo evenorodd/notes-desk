@@ -2,7 +2,8 @@
 
 The app does one job: **every night, take closing prices, value every note, and
 write a report of what needs attention.** Everything else supports that.
-README.md has the full step-by-step guide.
+README.md has the full step-by-step guide, including getting and updating the
+code from GitHub on Windows, Mac and Linux.
 
 ## How it works
 
