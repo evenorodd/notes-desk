@@ -6,6 +6,7 @@
     python3 notes_desk.py price-template 2026-11-23 or: a blank price file to type in
     python3 notes_desk.py nightly 2026-11-23        load the prices, run the job, write the reports
     python3 notes_desk.py nightly --fetch           fetch today's closes and run, in one step
+    python3 notes_desk.py backfill 2026-01-01       download history and replay every night since then
     python3 notes_desk.py add-notes new_notes.csv   add notes, building their check dates
     python3 notes_desk.py serve                     open the notes desk in your browser (http://localhost:8000)
     python3 notes_desk.py mcp                       serve read-only tools to AI assistants (MCP)

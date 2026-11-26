@@ -39,11 +39,20 @@ def nightly_problems(conn, prices, run_date):
             out.append(f"line {p['_line']} {p['index_code']}: date {p['price_date']} isn't the run date {run_date}")
 
     codes = [p["index_code"] for p in prices]
-    missing = sorted(_known_codes(conn) - set(codes))
+    missing = sorted(needed_codes(conn, run_date) - set(codes))
     if missing:
         out.append(f"missing a close for: {', '.join(missing)} "
                    "(python3 notes_desk.py price-template lists every underlier)")
     return out
+
+
+def needed_codes(conn, run_date):
+    """Underliers that need a close on this date: those of notes in the book that
+    night (priced by then, not closed before it). Before a note is priced, its
+    underlier isn't needed, which matters when filling in history."""
+    return {r[0] for r in db.rows(conn, """
+        select distinct index_code from notes
+        where trade_date <= %s and (closed_date is null or closed_date >= %s)""", (run_date, run_date))}
 
 
 def big_moves(conn, prices, run_date):

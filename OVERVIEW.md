@@ -43,6 +43,7 @@ README.md has the full step-by-step guide.
 |---|---|
 | `setup` | Once, or to rebuild from scratch. It builds the database from `real_notes/` and `my_history.csv`. |
 | `nightly DATE --fetch` | Every trading night. It gets prices, values the notes and writes the reports. |
+| `backfill START` | Downloads history and replays every night since START (e.g. `2026-01-01`), then checks each note's starting level against the close on its trade date. |
 | `fetch-prices` / `price-template` | Get a night's prices on their own (downloaded, or a blank file to type in). |
 | `add-notes FILE` | When new notes are bought. |
 | `serve` | Opens the notes desk in your web browser at http://localhost:8000: dashboard, every note, one page per note, run history. |

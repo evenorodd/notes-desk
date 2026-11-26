@@ -18,7 +18,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from . import FEEDS_DIR, DeskError, csvfiles, db, prices, report
+from . import REPORTS_DIR, FEEDS_DIR, DeskError, csvfiles, db, prices, report
 from .textable import table
 
 LOCK_FILE = Path(tempfile.gettempdir()) / "notes_desk_nightly.lock"
@@ -44,13 +44,22 @@ def price_file(run_date):
     return FEEDS_DIR / f"closes_{run_date}.csv"
 
 
-def run(run_date, fetch=False):
+def run(run_date, fetch=False, replay=True, reports=True, alerts=True):
+    """One night. The options are for backfill, which replays many nights in
+    date order: no replaying of later nights (it runs them itself), reports for
+    the last night only, and no alert per night (it reports at the end)."""
+    def notify(d, message):
+        if alerts:
+            alert(d, message)
+        else:
+            log(d, "not alerted: " + message.splitlines()[0])
+
     # Only one run at a time, even if cron fires while a manual rerun is going.
     lock = open(LOCK_FILE, "w")
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        alert(run_date, "another run is still in progress")
+        notify(run_date, "another run is still in progress")
         raise DeskError("Another nightly run is still in progress.")
 
     conn = db.connect()
@@ -63,7 +72,7 @@ def run(run_date, fetch=False):
         def fail(message, problems=()):
             conn.rollback()
             detail = message + ("\n  " + "\n  ".join(problems) if problems else "")
-            alert(run_date, detail)
+            notify(run_date, detail)
             db.run(conn, "update job_runs set status = 'failed', finished_at = now(), message = %s "
                          "where run_id = %s", (detail, run_id))
             conn.commit()
@@ -102,9 +111,11 @@ def run(run_date, fetch=False):
         log(run_date, "running nightly job")
         try:
             headers, steps = db.query(conn, "select * from run_nightly(%s)", (run_date,))
-            later = [r[0] for r in db.rows(conn, """select distinct run_date from note_daily_status
-                                                     where run_date > %s order by 1""", (run_date,))]
-            db.scalar(conn, "select replay_later_nights(%s)", (run_date,))
+            later = []
+            if replay:
+                later = [r[0] for r in db.rows(conn, """select distinct run_date from note_daily_status
+                                                         where run_date > %s order by 1""", (run_date,))]
+                db.scalar(conn, "select replay_later_nights(%s)", (run_date,))
         except Exception as e:
             if not db.is_db_error(e):
                 raise
@@ -112,23 +123,27 @@ def run(run_date, fetch=False):
         conn.commit()
         print(table(headers, steps))
 
-        morning, notes = report.write_reports(conn, run_date)
-        if later:
+        morning = notes = None
+        if reports:
+            morning, notes = report.write_reports(conn, run_date)
+        if later and reports:
             # An earlier night was rerun: the later nights were replayed on top
-            # of it, so their reports are rewritten too.
+            # of it, so their existing reports are rewritten to match (nights
+            # without report files, such as backfilled ones, don't get new ones).
             for d in later:
-                report.write_reports(conn, d)
+                if (REPORTS_DIR / f"morning_{d}.txt").exists():
+                    report.write_reports(conn, d)
             log(run_date, f"replayed {len(later)} later night(s) so calls and maturities stay right: "
                           + ", ".join(str(d) for d in later))
         warning = None
         if moves:
             warning = ("loaded, but these moved more than 20% in a day. Check them against another "
                        f"source; if one is wrong, fix {path.name} and rerun this date:\n  " + "\n  ".join(moves))
-            alert(run_date, warning)
+            notify(run_date, warning)
         db.run(conn, "update job_runs set status = 'ok', finished_at = now(), message = %s where run_id = %s",
                (warning, run_id))
         conn.commit()
-        log(run_date, f"done. Report: {morning}  Every note: {notes.name}")
+        log(run_date, f"done. Report: {morning}  Every note: {notes.name}" if reports else "done.")
     finally:
         conn.close()
         lock.close()

@@ -570,8 +570,9 @@ def svg_price_chart(points, levels, width=640, height=260):
                    f'<text class="lvl-{cls}" x="{pad_l + W + 6}" y="{Y(v) + 4:.1f}">{esc(label)} {float(v):,.0f}</text>')
     path = " ".join(f"{'M' if i == 0 else 'L'}{X(x):.1f},{Y(v):.1f}" for i, (x, (_, v)) in enumerate(zip(xs, points)))
     out.append(f'<path class="price" d="{path}"/>')
-    for x, (_, v) in zip(xs, points):
-        out.append(f'<circle class="dot" cx="{X(x):.1f}" cy="{Y(v):.1f}" r="3"/>')
+    if len(points) <= 40:   # dots only while there are few enough to see
+        for x, (_, v) in zip(xs, points):
+            out.append(f'<circle class="dot" cx="{X(x):.1f}" cy="{Y(v):.1f}" r="3"/>')
     out.append("</svg>")
     return "".join(out)
 
@@ -679,7 +680,7 @@ def note_page(conn, cusip, query):
         obs_rows.append(f'<tr><td class="{cls}">{od}</td><td class="{cls}">{esc(kinds)}</td><td>{tag}</td></tr>')
 
     hist = db.rows(conn, """select run_date, index_level, perf, cushion, payout_per_1000
-                            from note_daily_status where note_id = %s order by run_date desc""", (n["note_id"],))
+                            from note_daily_status where note_id = %s order by run_date desc limit 30""", (n["note_id"],))
     hist_rows = ["<tr>" + cell(f'<a href="/?date={r}">{r}</a>', r) + cell(num(lv), lv, "n")
                  + cell(pct(p, True), p, "n")
                  + cell(f'<span class="t-{tone(cu)}">{pct(cu, True)}</span>' if cu is not None else "—", cu, "n")
@@ -744,7 +745,7 @@ def note_page(conn, cusip, query):
 <div class="calc"><input type="range" id="move" min="{curve[0][0]}" max="{curve[-1][0]}" step="1" value="{start_move}" data-start="{float(init)}" aria-label="Move from start">
 <span>Move <b id="move-lbl"></b> → level <b id="lvl-out"></b></span><span class="out" id="pay-out"></span></div>
 <script type="application/json" id="curve">{json.dumps(curve)}</script></div>
-<div class="panel"><h2>Nightly history</h2>{table_html(["Night", "Close", "Since start", "Cushion", "Per $1,000"], hist_rows, numeric={1, 2, 3, 4})}</div>
+<div class="panel"><h2>Nightly history</h2><p class="note">The latest 30 nights.</p>{table_html(["Night", "Close", "Since start", "Cushion", "Per $1,000"], hist_rows, numeric={1, 2, 3, 4})}</div>
 <div class="panel"><h2>Holdings</h2>{table_html(["Household", "Advisor", "Notional"], hold_rows, numeric={2})}</div>
 </div></div>"""
     return page(cusip, body, "notes", PAYOFF_JS)

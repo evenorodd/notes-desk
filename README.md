@@ -70,6 +70,7 @@ python3 notes_desk.py fetch-prices 2026-11-23     # download that day's closes i
 python3 notes_desk.py price-template 2026-11-23   # or: a blank price file to type in
 python3 notes_desk.py nightly 2026-11-23          # load the prices, run the job, write the reports
 python3 notes_desk.py nightly --fetch             # fetch today's closes and run, in one step
+python3 notes_desk.py backfill 2026-01-01         # download history and replay every night since then
 python3 notes_desk.py add-notes new_notes.csv     # add notes, building their check dates
 python3 notes_desk.py serve                       # the website, at http://localhost:8000
 python3 notes_desk.py export                      # save the website as files to share
@@ -484,6 +485,35 @@ them to Slack too, set `NOTES_DESK_SLACK_WEBHOOK` to a Slack incoming-webhook UR
   system flags coupon checks but doesn't record what was paid.
 - Notes called for a fixed premium are marked called, but the premium isn't
   recorded as a payment.
+
+## Filling in history (`backfill`)
+
+```bash
+python3 notes_desk.py backfill 2026-01-01                  # up to today
+python3 notes_desk.py backfill 2026-01-01 --end 2026-11-25
+python3 notes_desk.py backfill --no-download               # replay the price files already in feeds/
+```
+
+1. **Downloads** every underlier's daily closes for the period, one request per
+   underlier, and writes one price file per trading day in `feeds/`. Price
+   files already there are kept as they are (they're the record of what was
+   loaded); add `--force` to replace them.
+2. **Replays** every night in date order, so each coupon, call and maturity
+   check is applied on its own date. A note only counts from its trade date,
+   and a night only needs prices for the notes in the book that night. Each
+   night gets a run-log entry; only the last gets report files.
+3. **Checks every note's starting level** against the downloaded close on its
+   trade date. Some filings set it a few days earlier, on a "strike date"; a
+   match with a close in the 10 days before is listed separately as normal.
+   Anything else is flagged: a typo in `real_notes/notes.csv`, or a stock split
+   (downloaded history is split-adjusted, filings aren't).
+4. **Summarizes:** notes called or matured during the period, nights with
+   moves over 20%, and any night that failed, with the reason. Fix a failed
+   night's price file and run backfill again; it's safe to repeat.
+
+A full year (about 230 nights) takes seconds. The website's charts and the AI
+tools' price history then cover the whole period. Docker's first start replays
+every price file in `feeds/` the same way.
 
 ## The website
 

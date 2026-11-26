@@ -38,6 +38,17 @@ def main(argv=None):
                    help="the trading day (default: the latest day with closes)")
     s.add_argument("--force", action="store_true", help="replace the file if it already exists")
 
+    s = sub.add_parser("backfill", help="download history and replay every night since a date",
+                       description="Downloads every underlier's daily closes from START to END (one price file "
+                                   "per trading day in feeds/), runs the nightly job for each day in order so "
+                                   "every coupon, call and maturity check is applied, then checks each note's "
+                                   "starting level against the close on its trade date.")
+    s.add_argument("start", nargs="?", type=_date, help="first date, e.g. 2026-01-01 (needed unless --no-download)")
+    s.add_argument("--end", type=_date, help="last date (default: today in New York)")
+    s.add_argument("--no-download", action="store_true",
+                   help="don't download: replay the price files already in feeds/")
+    s.add_argument("--force", action="store_true", help="replace price files that already exist")
+
     s = sub.add_parser("nightly", help="load a day's prices, run the job, write the reports",
                        description="Loads feeds/closes_DATE.csv, runs the nightly job and writes "
                                    "reports/morning_DATE.txt and reports/notes_DATE.csv.")
@@ -91,6 +102,9 @@ def main(argv=None):
                 write_price_file(conn, price_file, args.date, args.force)
             finally:
                 conn.close()
+        elif args.command == "backfill":
+            from .backfill import backfill
+            backfill(args.start, args.end, download=not args.no_download, force=args.force)
         elif args.command == "nightly":
             from .nightly import run
             run(args.date, args.fetch)

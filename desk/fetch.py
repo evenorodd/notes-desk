@@ -83,9 +83,14 @@ def parse_chart(data, now=None):
     return closes
 
 
-def daily_closes(symbol):
-    """{date: close} for the last month of trading days."""
+def daily_closes(symbol, start=None, end=None):
+    """{date: close} for the last month of trading days, or for start..end."""
     url = URL.format(symbol=urllib.parse.quote(symbol))
+    if start:
+        # Ask for a date range instead of the last month.
+        to_epoch = lambda d: int(datetime.datetime.combine(d, datetime.time(), datetime.timezone.utc).timestamp())
+        last = (end or datetime.date.today()) + datetime.timedelta(days=1)
+        url = url.split("?")[0] + f"?period1={to_epoch(start)}&period2={to_epoch(last)}&interval=1d"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (notes_desk)"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:

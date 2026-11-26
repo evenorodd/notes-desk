@@ -114,6 +114,17 @@ begin
     assert (select closed_date from notes where cusip = 'TEST00002') = '2027-01-19',
            'replaying Jan 19 should call TEST00002 there again';
 
+    -- A note isn't in the book before its trade date: no valuation, no flags,
+    -- and no close needed for its underlier.
+    insert into indices (index_code, name) values ('LATE', 'Underlier of a later note');
+    insert into notes (cusip, issuer_id, index_code, note_type, trade_date, maturity_date,
+                       initial_level, buffer_pct, participation)
+    values ('TEST00003', 1, 'LATE', 'buffered', '2027-06-01', '2028-06-01', 50, 0.10, 1.0);
+    perform run_nightly('2027-01-19');   -- no LATE close that day: must still run
+    assert not exists (select 1 from note_daily_status ns join notes n using (note_id)
+                       where n.cusip = 'TEST00003'),
+           'a note was valued before its trade date';
+
     -- Missing market data must stop the job rather than produce numbers.
     begin
         perform run_nightly('2027-02-01');

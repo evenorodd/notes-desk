@@ -60,9 +60,9 @@ except DeskError:
 if not built:
     print("First start: building the database ...", flush=True)
     subprocess.run(APP + ["setup"], check=True)
-    for f in sorted(FEEDS_DIR.glob("closes_*.csv")):
-        night = f.stem[len("closes_"):]
-        if subprocess.run(APP + ["nightly", night]).returncode != 0:
-            print(f"(The run for {night} didn't finish; the website will show why on its Runs page.)", flush=True)
+    if any(FEEDS_DIR.glob("closes_*.csv")):
+        # Every price file in feeds/, oldest first, so each check lands on its date.
+        if subprocess.run(APP + ["backfill", "--no-download"]).returncode != 0:
+            print("(Replaying the price history didn't finish; the website's Runs page shows why.)", flush=True)
 
 os.execv(APP[0], APP + ["serve", "--host", "0.0.0.0", "--port", "8000"])

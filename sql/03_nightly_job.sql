@@ -45,11 +45,14 @@ declare
     prev_run date;
 begin
     -- 1. Refuse to run on incomplete data. Using yesterday's prices silently
-    --    is worse than not running at all.
-    select string_agg(i.index_code, ', ' order by i.index_code) into missing
-    from indices i
-    where not exists (select 1 from market_data m
-                      where m.index_code = i.index_code and m.price_date = p_run_date);
+    --    is worse than not running at all. Only the underliers of notes in the
+    --    book that night are needed: priced by then, and not closed before it.
+    select string_agg(distinct nt.index_code, ', ' order by nt.index_code) into missing
+    from notes nt
+    where nt.trade_date <= p_run_date
+      and (nt.closed_date is null or nt.closed_date >= p_run_date)
+      and not exists (select 1 from market_data m
+                      where m.index_code = nt.index_code and m.price_date = p_run_date);
     if missing is not null then
         raise exception 'Missing closing levels for % on %', missing, p_run_date;
     end if;
@@ -66,8 +69,8 @@ begin
     -- reruns those nights in order to decide them again.
     update notes set status = 'live', closed_date = null where closed_date >= p_run_date;
 
-    -- 2. Snapshot every note that was open on this date: live ones, plus any
-    --    closed on a later night (so rerunning an old date still shows them).
+    -- 2. Snapshot every note that was open on this date: priced by then, and
+    --    live or closed on a later night (so rerunning an old date shows them).
     delete from note_daily_status where run_date = p_run_date;
     insert into note_daily_status (run_date, note_id, index_level, perf, cushion, coupon_cushion,
                                    dist_to_call, payout_per_1000)
@@ -80,7 +83,7 @@ begin
            note_payout_per_1000(nt, m.close)
     from notes nt
     join market_data m on m.index_code = nt.index_code and m.price_date = p_run_date
-    where nt.closed_date is null or nt.closed_date > p_run_date;
+    where nt.trade_date <= p_run_date and (nt.closed_date is null or nt.closed_date > p_run_date);
     get diagnostics n = row_count;
     step := 'notes valued'; rows_affected := n; return next;
 
@@ -118,7 +121,7 @@ begin
                end as flag,
                (select sum(h.notional) from holdings h where h.note_id = o.note_id) as notional
         from observation_dates o
-        join notes nt on nt.note_id = o.note_id
+        join notes nt on nt.note_id = o.note_id and nt.trade_date <= p_run_date
                      and (nt.closed_date is null or nt.closed_date > p_run_date)
         join note_daily_status s on s.note_id = o.note_id and s.run_date = p_run_date
         where o.obs_date > p_run_date and o.obs_date <= p_run_date + 30
@@ -135,7 +138,7 @@ begin
     from notes nt
     join note_daily_status s on s.note_id = nt.note_id and s.run_date = p_run_date
     join observation_dates o on o.note_id = nt.note_id and o.kind = 'maturity'
-    where (nt.closed_date is null or nt.closed_date > p_run_date)
+    where nt.trade_date <= p_run_date and (nt.closed_date is null or nt.closed_date > p_run_date)
       and s.cushion < 0 and o.obs_date > p_run_date + 30
       and exists (select 1 from holdings h where h.note_id = nt.note_id);
     get diagnostics n = row_count;
@@ -153,7 +156,7 @@ begin
         from holdings h
         join accounts a using (account_id)
         join notes nt using (note_id)
-        where nt.closed_date is null or nt.closed_date > p_run_date
+        where nt.trade_date <= p_run_date and (nt.closed_date is null or nt.closed_date > p_run_date)
         group by a.advisor_id, nt.index_code
     ) x
     join advisors ad using (advisor_id)
