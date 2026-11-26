@@ -25,7 +25,7 @@ import urllib.parse
 from decimal import Decimal
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import REPORTS_DIR, DeskError, db
+from . import REPORTS_DIR, DeskError, db, market_today
 
 TOKEN = secrets.token_urlsafe(16)
 STATIC = {"on": False, "date": None}   # set by export(): pages rendered as files   # guards the run form against other websites posting to it
@@ -770,7 +770,7 @@ def runs_page(conn, result=None):
     lrows = ["<tr>" + cell(str(r), r) + cell(f'<span class="mono">{esc(str(f).split("/")[-1])}</span>', f)
              + cell(str(c), c, "n") + cell(esc(t), t) + "</tr>" for r, f, c, t in loads]
 
-    today = datetime.date.today()
+    today = market_today()
     res = ""
     if result:
         ok, d, log_text = result

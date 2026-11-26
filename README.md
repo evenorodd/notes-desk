@@ -38,6 +38,27 @@ price file in `feeds/`. Later starts take seconds.
 The website is only reachable from your own computer. Reports and price files
 appear in your `reports/` and `feeds/` folders as usual.
 
+**Each trading night** (after 4:20 pm New York time), with Docker Desktop
+running, open a terminal in the project folder (on Windows: type `powershell`
+in File Explorer's address bar there) and run:
+
+```bash
+docker compose up -d                                           # start it, if it isn't running
+docker compose exec app python3 notes_desk.py nightly --fetch  # today's closes, the job, the reports
+```
+
+Then refresh http://localhost:8000, or open the new file in `reports/`. "Today"
+means today in New York, whatever your computer's time zone. To pick up price
+files someone else added to the repository instead, get the new files
+(`git pull`, or download the ZIP again over your folder) and run the job for
+each new date, oldest first: `docker compose exec app python3 notes_desk.py
+nightly 2026-11-25`.
+
+To schedule it on Windows, create a Task Scheduler task for weekdays at 6:15
+pm Eastern that runs `docker` with the arguments
+`compose -f C:\path\to\notes-desk\compose.yaml exec -T app python3 notes_desk.py nightly --fetch`
+(Docker Desktop must be running).
+
 ## Running it without Docker
 
 Needs Python 3.9 or later, PostgreSQL, and the psycopg driver (setup on

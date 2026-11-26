@@ -5,7 +5,7 @@ import datetime
 import sys
 from pathlib import Path
 
-from . import DeskError, db
+from . import DeskError, db, market_today
 
 
 def _date(text):
@@ -41,8 +41,8 @@ def main(argv=None):
     s = sub.add_parser("nightly", help="load a day's prices, run the job, write the reports",
                        description="Loads feeds/closes_DATE.csv, runs the nightly job and writes "
                                    "reports/morning_DATE.txt and reports/notes_DATE.csv.")
-    s.add_argument("date", nargs="?", type=_date, default=datetime.date.today(),
-                   help="the run date (default: today)")
+    s.add_argument("date", nargs="?", type=_date, default=market_today(),
+                   help="the run date (default: today in New York)")
     s.add_argument("--fetch", action="store_true",
                    help="download the closes first if feeds/closes_DATE.csv doesn't exist yet")
 

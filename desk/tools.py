@@ -20,7 +20,7 @@ import datetime
 import io
 from decimal import Decimal
 
-from . import DeskError, db
+from . import DeskError, db, market_today
 
 TYPES = ("income", "buffered", "trigger_growth", "protected")
 
@@ -255,7 +255,7 @@ def run_nightly(date=None, fetch=True):
     does, and returns its log, then that night's summary if it worked."""
     from .nightly import run
     try:
-        d = datetime.date.fromisoformat(date) if date else datetime.date.today()
+        d = datetime.date.fromisoformat(date) if date else market_today()
     except ValueError:
         raise DeskError(f"'{date}' isn't a date; use YYYY-MM-DD.")
     log = io.StringIO()
@@ -380,7 +380,7 @@ WRITE_TOOLS = [
                        "about prices to double-check (moves over 20%) and any failure, in full.",
         "input_schema": {
             "type": "object",
-            "properties": {"date": {"type": "string", "description": "Trading day, YYYY-MM-DD. Default: today."},
+            "properties": {"date": {"type": "string", "description": "Trading day, YYYY-MM-DD. Default: today in New York."},
                            "fetch": {"type": "boolean", "description": "Download the closes if there's no price file yet. Default true."}},
             "additionalProperties": False,
         },
