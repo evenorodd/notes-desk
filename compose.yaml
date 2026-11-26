@@ -2,6 +2,10 @@
 #   docker compose up --build      then open http://localhost:8000
 #   docker compose down            stop (the database is kept)
 #   docker compose down -v         stop and delete the database
+# A fixed name, so the app and its database stay the same whatever the
+# project folder is called (a re-downloaded ZIP often unzips into a new folder).
+name: notes-desk
+
 services:
   db:
     image: postgres:16-alpine

@@ -117,9 +117,29 @@ run `python3 notes_desk.py backfill --no-download` for new price files. The
 nightly job reloads its database logic itself, so no setup is needed after an
 update.
 
-**Without Git** (not recommended): on the GitHub page, **Code → Download ZIP**,
-and unzip it **over your existing folder** each time. Unzipping into a new
-folder gives Docker a new, empty database.
+**Without Git (downloading the ZIP).** This works too; Git just makes updating
+quicker. On the GitHub page, click **Code → Download ZIP**, then:
+
+| | Windows | Mac |
+|---|---|---|
+| Unzip | Right-click the ZIP in Downloads → **Extract All** | Safari usually unzips it for you; otherwise double-click it |
+| Open a terminal in the folder | Open the `notes-desk-main` folder, type `powershell` in the address bar, press Enter | Open **Terminal**, type `cd ` (with a space), drag the `notes-desk-main` folder onto the window, press Enter |
+
+Then, with Docker Desktop running, the same commands on both:
+
+```
+docker compose up --build -d
+docker compose exec app python3 notes_desk.py backfill --no-download
+```
+
+and open http://localhost:8000. The second command is only needed for an
+update; the first start builds the database by itself.
+
+To update later, download the ZIP again and repeat. It's fine if the new copy
+unzips into a differently named folder (`notes-desk-main (1)`,
+`notes-desk-main 2`): `compose.yaml` gives the app a fixed name, so Docker
+keeps using the same database. Any price files you fetched yourself are in the
+old folder's `feeds/`, so copy them across, or just run `nightly --fetch` again.
 
 If `git pull` says your local changes would be overwritten, you've edited a
 file that the update also changes. `git stash` sets your edits aside, then
