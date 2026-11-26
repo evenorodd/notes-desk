@@ -9,10 +9,15 @@ Design rules:
   - Every number comes from the database or note_payout_per_1000(), the same
     function the nightly job uses. The assistant explains; it never computes.
   - Read-only: each call runs on a connection where PostgreSQL refuses writes.
+    The one exception, run_nightly, is only offered when the server is started
+    with --allow-runs (see available()), and it runs the ordinary nightly job:
+    the same checks, lock, log and reports as the command line.
   - Percentages are returned in percent (-8.55 means -8.55%), money in dollars.
 """
 
+import contextlib
 import datetime
+import io
 from decimal import Decimal
 
 from . import DeskError, db
@@ -245,6 +250,34 @@ def run_history(conn, limit=10):
     return {"runs": rows}
 
 
+def run_nightly(date=None, fetch=True):
+    """Runs the nightly job exactly as `notes_desk.py nightly DATE [--fetch]`
+    does, and returns its log, then that night's summary if it worked."""
+    from .nightly import run
+    try:
+        d = datetime.date.fromisoformat(date) if date else datetime.date.today()
+    except ValueError:
+        raise DeskError(f"'{date}' isn't a date; use YYYY-MM-DD.")
+    log = io.StringIO()
+    ok = True
+    with contextlib.redirect_stdout(log):
+        try:
+            run(d, fetch)
+        except DeskError as e:
+            ok = False
+            print(str(e))
+            for p in e.problems:
+                print(f"  {p}")
+    result = {"night": d.isoformat(), "ok": ok, "log": log.getvalue().strip()}
+    if ok:
+        conn = read_only_connection()
+        try:
+            result["summary"] = book_summary(conn, d.isoformat())
+        finally:
+            conn.close()
+    return result
+
+
 # --- the catalogue ------------------------------------------------------------------
 
 DATE = {"type": "string", "description": "A night with results, YYYY-MM-DD. Default: the latest night."}
@@ -336,7 +369,32 @@ TOOLS = [
     },
 ]
 
-BY_NAME = {t["name"]: t for t in TOOLS}
+# Tools that change data. Offered only when the server is started with --allow-runs.
+WRITE_TOOLS = [
+    {
+        "name": "run_nightly",
+        "description": "Run the nightly job for one trading day: download that day's closing prices if there's "
+                       "no price file for it yet, check them, value every note and write the reports. Rerunning "
+                       "a day is safe (it replaces that day's results). Prices are final from 4:20 pm New York "
+                       "time; weekends and market holidays have no prices. Always report any lines in the log "
+                       "about prices to double-check (moves over 20%) and any failure, in full.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"date": {"type": "string", "description": "Trading day, YYYY-MM-DD. Default: today."},
+                           "fetch": {"type": "boolean", "description": "Download the closes if there's no price file yet. Default true."}},
+            "additionalProperties": False,
+        },
+        "handler": run_nightly,
+        "writes": True,
+    },
+]
+
+BY_NAME = {t["name"]: t for t in TOOLS + WRITE_TOOLS}
+
+
+def available(allow_runs=False):
+    """The tools a server offers: the read-only ones, plus run_nightly if allowed."""
+    return TOOLS + (WRITE_TOOLS if allow_runs else [])
 
 
 def check_arguments(schema, args):
@@ -374,6 +432,8 @@ def call(name, args, connect=read_only_connection):
     problems = check_arguments(tool["input_schema"], args)
     if problems:
         raise DeskError("Invalid arguments: " + "; ".join(problems))
+    if tool.get("writes"):
+        return tool["handler"](**{k: v for k, v in args.items() if v is not None})
     conn = connect()
     try:
         return tool["handler"](conn, **{k: v for k, v in args.items() if v is not None})

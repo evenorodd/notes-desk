@@ -17,7 +17,10 @@ README.md has the full step-by-step guide.
           └──────────────────► nightly ──► values every note ──► reports/morning_DATE.txt
                                                                  reports/notes_DATE.csv
                                                    │
-                                                   └──► serve ──► the same results in your browser
+                                                   ├──► serve ──► the same results in your browser
+                                                   └──► mcp   ──► an AI assistant (Claude) answers questions
+                                                                  about the book; with --allow-runs it can
+                                                                  also run the nightly job
 ```
 
 ## The folders
@@ -43,7 +46,7 @@ README.md has the full step-by-step guide.
 | `fetch-prices` / `price-template` | Get a night's prices on their own (downloaded, or a blank file to type in). |
 | `add-notes FILE` | When new notes are bought. |
 | `serve` | Opens the notes desk in your web browser at http://localhost:8000: dashboard, every note, one page per note, run history. |
-| `mcp` | Lets an AI assistant (Claude Desktop, Claude Code) answer questions about the book, read-only. |
+| `mcp` | Lets an AI assistant (Claude Desktop, Claude Code) answer questions about the book, read-only. Add `--allow-runs` to let it run the nightly job too. Started by the assistant, not by you. |
 | `export` | Saves the website for one night as plain HTML files in `export/`, to share. |
 | `what-if` / `test` | To explore payouts or check the logic. They change nothing. |
 
@@ -92,6 +95,22 @@ open it. Leave the terminal window open while you use it; Ctrl+C stops it.
   and the note's history night by night.
 - **Runs:** every nightly run and whether it worked, the price files loaded,
   and a button that runs the nightly job (with the price download if needed).
+
+## The AI assistant (`mcp`)
+
+`notes_desk.py mcp` is an MCP server: the standard way to give an AI assistant
+tools. Once it's registered with Claude Code or Claude Desktop (README.md,
+"Ask Claude about the book"), you can ask about the book in plain English.
+
+- **Seven read-only tools:** a night's summary, finding notes, one note in
+  full, payouts at any move, upcoming events, price history and run history.
+- **Every number comes from the app:** payouts use the same SQL function as
+  the nightly job; Claude explains, it doesn't calculate.
+- **Read-only by default:** PostgreSQL itself refuses writes on the tools'
+  connection. With `--allow-runs`, one more tool, `run_nightly`, runs the
+  ordinary nightly job, logged like any other run.
+- **Framework-neutral:** the tools live in `desk/tools.py` as plain
+  functions; `desk/mcp_server.py` just serves them.
 
 ## The two reports
 

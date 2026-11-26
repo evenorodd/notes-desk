@@ -53,6 +53,7 @@ python3 notes_desk.py add-notes new_notes.csv     # add notes, building their ch
 python3 notes_desk.py serve                       # the website, at http://localhost:8000
 python3 notes_desk.py export                      # save the website as files to share
 python3 notes_desk.py mcp                         # tools for AI assistants (see "Ask Claude about the book")
+python3 notes_desk.py mcp --allow-runs            # the same, plus a tool that runs the nightly job
 python3 notes_desk.py what-if                     # example payouts and flags (changes nothing)
 python3 notes_desk.py test                        # run the tests (changes nothing)
 ```
@@ -509,12 +510,14 @@ English, using the app's own numbers. For example:
 - "Which notes have a coupon at risk in the next 30 days?"
 
 **The tools** (in `desk/tools.py`): `book_summary`, `find_notes`, `get_note`,
-`payout_at_moves`, `upcoming_events`, `price_history` and `run_history`.
+`payout_at_moves`, `upcoming_events`, `price_history` and `run_history`, all
+read-only. One more, `run_nightly`, is off unless you turn it on (below).
 
 **Guardrails:**
 
-- **Read-only:** every tool runs on a database connection where PostgreSQL
-  itself refuses writes. The assistant can't change notes, prices or results.
+- **Read-only by default:** every tool runs on a database connection where
+  PostgreSQL itself refuses writes. The assistant can't change notes, prices or
+  results unless you start the server with `--allow-runs`.
 - **No invented numbers:** payouts come from `note_payout_per_1000()`, the same
   function the nightly job uses, and the server tells the assistant to take
   every number from a tool.
@@ -534,7 +537,9 @@ claude mcp list        # should show notes-desk as connected
 
 Then start `claude` and ask away (`/mcp` shows the server and its tools).
 
-### Claude Desktop (Mac, Windows, Linux)
+### Claude Desktop (Mac, Windows; Linux beta on Ubuntu and Debian only)
+
+On Fedora and other Linux distributions, use Claude Code instead (above).
 
 In Claude Desktop: **Settings → Developer → Edit Config**, and add (with your
 own full path):
@@ -572,6 +577,28 @@ With `docker compose up` running, point the client at the container. The
 
 On a Mac, if Claude Desktop says it can't find `docker`, use its full path,
 `/usr/local/bin/docker`.
+
+### Letting Claude run the nightly job (`--allow-runs`)
+
+Start the server with `--allow-runs` and it also offers **`run_nightly`**: it
+fetches a day's closes if there's no price file yet, runs the nightly job and
+returns its log plus that night's summary. Then you can say *"fetch today's
+closes, run the job and tell me what changed"*.
+
+It's the ordinary nightly job, with the same price checks, lock, run log and
+reports as `nightly DATE --fetch`, so a run from Claude shows up on the Runs
+page and in `run_history` like any other. Rerunning a day is safe. Clients see
+it marked as a tool that changes data, and ask before using it unless you've
+told them not to. The other tools stay read-only either way.
+
+To switch an existing Claude Code setup over:
+
+```bash
+claude mcp remove -s user notes-desk
+claude mcp add -s user --transport stdio notes-desk -- python3 /full/path/to/notes_desk/notes_desk.py mcp --allow-runs
+```
+
+For Claude Desktop, add `"--allow-runs"` after `"mcp"` in the `args` list.
 
 ### Other agent frameworks
 

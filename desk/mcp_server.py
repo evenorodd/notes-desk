@@ -19,7 +19,8 @@ SUPPORTED_VERSIONS = ["2025-06-18", "2025-03-26", "2024-11-05"]
 
 INSTRUCTIONS = (
     "Tools for a book of structured notes (income/autocallable, buffered, principal-protected) valued "
-    "nightly against closing prices. All tools are read-only. Take every number from a tool, never work "
+    "nightly against closing prices. All tools are read-only except run_nightly, when it is offered. "
+    "Take every number from a tool, never work "
     "out a payout yourself: use payout_at_moves. Percentages come back in percent. 'Cushion' is how much "
     "further the underlier can fall before principal is lost at maturity; negative means already past "
     "the buffer or barrier. Cite a note's sec_filing link when explaining its terms."
@@ -60,7 +61,9 @@ class Server:
         if method == "tools/list":
             return self.result(msg_id, {"tools": [
                 {"name": t["name"], "description": t["description"], "inputSchema": t["input_schema"],
-                 "annotations": {"readOnlyHint": True, "openWorldHint": False}}
+                 "annotations": ({"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True,
+                                  "openWorldHint": True} if t.get("writes") else
+                                 {"readOnlyHint": True, "openWorldHint": False})}
                 for t in self.tool_list]})
         if method == "tools/call":
             name, args = params.get("name"), params.get("arguments") or {}
@@ -101,13 +104,14 @@ class Server:
                 self.out.flush()
 
 
-def main():
+def main(allow_runs=False):
     # Keep stdout for protocol messages only: anything else printed while a
     # tool runs goes to stderr, where MCP clients show it as a log.
     out = sys.stdout
     sys.stdout = sys.stderr
-    print("notes-desk MCP server ready (read-only tools; reading requests on stdin)", file=sys.stderr)
+    kind = "read-only tools plus run_nightly" if allow_runs else "read-only tools"
+    print(f"notes-desk MCP server ready ({kind}; reading requests on stdin)", file=sys.stderr)
     try:
-        Server(out=out).serve(sys.stdin)
+        Server(tool_list=tools.available(allow_runs), out=out).serve(sys.stdin)
     except KeyboardInterrupt:
         pass

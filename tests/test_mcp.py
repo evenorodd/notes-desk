@@ -6,7 +6,7 @@ import unittest
 
 from desk import DeskError
 from desk.mcp_server import Server
-from desk.tools import TOOLS, check_arguments
+from desk.tools import TOOLS, available, check_arguments
 
 
 def fake_call(name, args):
@@ -65,6 +65,23 @@ class Protocol(unittest.TestCase):
             '{"jsonrpc":"2.0","id":2,"method":"tools/list"}\n'))
         lines = out.getvalue().splitlines()
         self.assertEqual([json.loads(l)["id"] for l in lines], [1, 2])
+
+
+class RunTool(unittest.TestCase):
+    def names(self, allow_runs):
+        s = Server(call_tool=fake_call, tool_list=available(allow_runs))
+        return {t["name"]: t for t in ask(s, "tools/list")["result"]["tools"]}
+
+    def test_hidden_unless_allowed(self):
+        self.assertNotIn("run_nightly", self.names(False))
+        s = Server(call_tool=fake_call, tool_list=available(False))
+        r = ask(s, "tools/call", {"name": "run_nightly", "arguments": {}})
+        self.assertEqual(r["error"]["code"], -32602)
+
+    def test_offered_and_marked_as_writing_when_allowed(self):
+        tools = self.names(True)
+        self.assertFalse(tools["run_nightly"]["annotations"]["readOnlyHint"])
+        self.assertTrue(tools["book_summary"]["annotations"]["readOnlyHint"])
 
 
 class Arguments(unittest.TestCase):
