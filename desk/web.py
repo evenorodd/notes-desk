@@ -238,7 +238,7 @@ document.querySelectorAll('table.sortable').forEach(function (t) {
         var x = a.cells[i].dataset.v, y = b.cells[i].dataset.v;
         if (x === '' && y === '') return 0; if (x === '') return 1; if (y === '') return -1;
         var nx = parseFloat(x), ny = parseFloat(y), c;
-        var isNum = /^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/;   // a real number, not a date like 2026-09-30
+        var isNum = /^[-+]?(\\d+\\.?\\d*|\\.\\d+)([eE][-+]?\\d+)?$/;   // a real number, not a date like 2026-09-30
         if (isNum.test(x) && isNum.test(y)) c = nx - ny;
         else c = x < y ? -1 : x > y ? 1 : 0;
         return asc ? c : -c;
@@ -783,10 +783,22 @@ def runs_page(conn, result=None):
                    select 1 from job_runs j2 where j2.run_date = job_runs.run_date and j2.run_id > job_runs.run_id)),
                min(run_date), max(run_date)
         from job_runs""")[0]
-    loads = db.rows(conn, """select run_date, filename, row_count, to_char(loaded_at, 'YYYY-MM-DD HH24:MI')
-                             from feed_loads order by load_id desc limit 20""")
-    lrows = ["<tr>" + cell(str(r), r) + cell(f'<span class="mono">{esc(str(f).split("/")[-1])}</span>', f)
-             + cell(str(c), c, "n") + cell(esc(t), t) + "</tr>" for r, f, c, t in loads]
+    # One row per night: the latest price file loaded, and how many times.
+    loads = db.rows(conn, """
+        select distinct on (run_date) run_date, filename, row_count,
+               to_char(loaded_at, 'YYYY-MM-DD HH24:MI'), count(*) over (partition by run_date)
+        from feed_loads order by run_date desc, load_id desc""")
+    n_underliers = db.scalar(conn, "select count(*) from indices")
+    lrows, short = [], 0
+    for r, f, c, t, times in loads:
+        if c < n_underliers:
+            short += 1
+        rows_cell = (cell(chip(str(c), "warn"), c, "n") if c < n_underliers else cell(str(c), c, "n"))
+        lrows.append("<tr>" + cell(str(r), r) + cell(f'<span class="mono">{esc(str(f).split("/")[-1])}</span>', f)
+                     + rows_cell + cell(esc(t), t) + cell(str(times), times, "n") + "</tr>")
+    loads_note = (f"{len(loads)} nights. Each night's latest price file; \"Rows\" is how many closes it had "
+                  f"(one per underlier, {n_underliers} in all) and \"Loads\" how many times it has been loaded."
+                  + (f" {short} night(s) had fewer than {n_underliers} closes." if short else ""))
 
     today = market_today()
     res = ""
@@ -810,7 +822,9 @@ def runs_page(conn, result=None):
 <div class="panel"><h2>Run history</h2>
 <p class="note">{counts[0]} nights{f", {counts[2]} to {counts[3]}" if counts[0] else ""}. Each night's latest run; "Runs" counts how many times it has been run (backfills and reruns add to it).{f" {counts[1]} night(s) whose latest run failed." if counts[1] else ""}</p>
 <div style="max-height:560px;overflow:auto">{table_html(["Night", "Status", "Last run", "Took", "Runs", "Run #", "Message"], trs, numeric={3, 4, 5})}</div></div>
-<div class="panel"><h2>Price files loaded</h2>{table_html(["Night", "File", "Rows", "Loaded"], lrows, numeric={2})}</div>"""
+<div class="panel"><h2>Price files loaded</h2>
+<p class="note">{loads_note}</p>
+<div style="max-height:560px;overflow:auto">{table_html(["Night", "File", "Rows", "Last loaded", "Loads"], lrows, numeric={2, 4})}</div></div>"""
     return page("Runs", body, "runs")
 
 
