@@ -1,4 +1,7 @@
--- The nightly job. All the business logic lives in one function so it runs
+-- The nightly job. The app reloads this file at the start of every nightly
+-- run, so it must only define functions (create or replace), never change data
+-- at the top level.
+-- All the business logic lives in one function so it runs
 -- as a single transaction: it either finishes completely or changes nothing.
 -- Rerunning it for the same date gives the same result.
 --

@@ -723,6 +723,9 @@ def note_page(conn, cusip, query):
 {f'<div class="tile {tone(ccu)}"><div class="k">Above coupon barrier</div><div class="v">{pct(ccu, True)}</div><div class="s">negative on a coupon date: no coupon</div></div>' if ccu is not None else ""}
 {f'<div class="tile {"good" if dc >= 0 else ""}"><div class="k">Vs call trigger</div><div class="v">{pct(dc, True)}</div><div class="s">{"would be called on a call date" if dc >= 0 else "below the call level"}</div></div>' if dc is not None else ""}
 </div>"""
+    elif d and d < n["trade_date"]:
+        tiles = (f'<div class="panel"><p class="empty">This note was priced on {n["trade_date"]:%B %-d, %Y}, '
+                 f'so it has no results for {d:%B %-d, %Y}. Pick a later night.</p></div>')
     else:
         tiles = f'<div class="panel"><p class="empty">No nightly result for this note on {d}.</p></div>'
 

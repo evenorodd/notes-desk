@@ -18,7 +18,7 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from . import REPORTS_DIR, FEEDS_DIR, DeskError, csvfiles, db, prices, report
+from . import SQL_DIR, REPORTS_DIR, FEEDS_DIR, DeskError, csvfiles, db, prices, report
 from .textable import table
 
 LOCK_FILE = Path(tempfile.gettempdir()) / "notes_desk_nightly.lock"
@@ -64,6 +64,11 @@ def run(run_date, fetch=False, replay=True, reports=True, alerts=True):
 
     conn = db.connect()
     try:
+        # The nightly logic lives in the database (sql/03_nightly_job.sql). Load
+        # the current version on every run, so updating the code is enough: no
+        # setup or manual reload. The file only defines functions, so this
+        # changes no data.
+        db.run_file(conn, SQL_DIR / "03_nightly_job.sql")
         run_id = db.scalar(conn, "insert into job_runs (job, run_date) values ('nightly', %s) returning run_id",
                            (run_date,))
         conn.commit()
