@@ -16,6 +16,8 @@ def _date(text):
 
 
 def main(argv=None):
+    from .folder_owner import in_docker
+    in_docker()   # inside the container: write files as the folder's owner, not root
     p = argparse.ArgumentParser(
         prog="notes_desk.py",
         description="Nightly monitoring of structured notes. Run a command with -h for its details.")
@@ -57,6 +59,11 @@ def main(argv=None):
                    help="the run date (default: today in New York)")
     s.add_argument("--fetch", action="store_true",
                    help="download the closes first if feeds/closes_DATE.csv doesn't exist yet")
+
+    sub.add_parser("catch-up", help="fetch and run every trading night since the last successful run (for schedules)",
+                   description="Downloads the closes since the last night that ran successfully and runs each "
+                               "trading night in order. Weekends and holidays have no closes, so they're skipped, "
+                               "and a night missed because the computer was off is run the next time.")
 
     s = sub.add_parser("add-notes", help="add new notes from a CSV, building their check dates",
                        description="Adds notes to the running database (keeping every price loaded) "
@@ -109,6 +116,9 @@ def main(argv=None):
         elif args.command == "nightly":
             from .nightly import run
             run(args.date, args.fetch)
+        elif args.command == "catch-up":
+            from .nightly import catch_up
+            catch_up()
         elif args.command == "add-notes":
             from .notes import add_notes
             add_notes(args.file, args.extra_dates, args.yes)

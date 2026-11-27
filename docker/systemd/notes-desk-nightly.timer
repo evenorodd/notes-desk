@@ -1,0 +1,12 @@
+# Every weekday at 5:00 pm New York time (4:00 pm Central), after the closes
+# are final. Persistent=true: if the computer was off or asleep then, it runs
+# as soon as it's back.
+[Unit]
+Description=Notes desk nightly run, weekdays after the US close
+
+[Timer]
+OnCalendar=Mon..Fri 17:00 America/New_York
+Persistent=true
+
+[Install]
+WantedBy=timers.target

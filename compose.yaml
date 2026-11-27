@@ -9,6 +9,7 @@ name: notes-desk
 services:
   db:
     image: postgres:16-alpine
+    restart: unless-stopped           # start again with Docker (e.g. after a reboot) unless you stopped it
     environment:
       POSTGRES_USER: notes
       POSTGRES_PASSWORD: notes        # only reachable by the app container, never published
@@ -23,6 +24,7 @@ services:
 
   app:
     build: .
+    restart: unless-stopped
     depends_on:
       db:
         condition: service_healthy

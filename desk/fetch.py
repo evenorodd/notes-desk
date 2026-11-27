@@ -36,7 +36,27 @@ URL = os.environ.get("NOTES_DESK_PRICE_URL",
 # A bar for today is only a close once the market has shut. Wait a little past
 # 4:00 pm New York time so the closing auction prints have come through.
 CLOSE_IS_FINAL_AFTER = datetime.time(16, 20)
+# After this, a weekday with no close at all is called a market holiday in the
+# error message (rather than the feed running a little late).
+HOLIDAY_IF_NO_CLOSE_BY = datetime.time(17, 0)
 CENT = Decimal("0.01")
+NEW_YORK = ZoneInfo("America/New_York")
+
+
+def why_no_closes(run_date, found, now=None):
+    """The feed has no close for run_date for any underlier: the error saying why."""
+    now = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(NEW_YORK)
+    if run_date > now.date():
+        return DeskError(f"{run_date} is in the future (it's {now:%Y-%m-%d %H:%M} in New York).")
+    if run_date == now.date() and now.time() < CLOSE_IS_FINAL_AFTER:
+        return DeskError(f"Today's closes aren't final until {CLOSE_IS_FINAL_AFTER:%H:%M} New York time "
+                         f"(it's {now:%H:%M} there now). Run it again after that.")
+    later = any(any(d > run_date for d in c) for c in found.values() if c)
+    if run_date.weekday() >= 5 or later or (run_date == now.date() and now.time() >= HOLIDAY_IF_NO_CLOSE_BY):
+        what = "a weekend" if run_date.weekday() >= 5 else "a market holiday"
+        return DeskError(f"No closes for {run_date}: the market was closed ({what}).")
+    return DeskError(f"No closes for {run_date} yet. If today was a trading day, the feed may be running "
+                     "late: try again in a few minutes.")
 
 
 def yahoo_symbol(code):
@@ -124,8 +144,7 @@ def fetch(codes, run_date=None):
         run_date = Counter(max(c) for c in found.values() if c).most_common(1)[0][0]
 
     if not any(run_date in c for c in found.values()):
-        raise DeskError(f"No closes for {run_date}. The market may have been closed that day "
-                        "(weekend or holiday), or today's close isn't final until 4:20 pm New York time.")
+        raise why_no_closes(run_date, found)
 
     closes = {}
     for code in codes:

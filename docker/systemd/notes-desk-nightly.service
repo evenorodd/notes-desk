@@ -1,0 +1,13 @@
+# Runs the notes desk's catch-up inside Docker: every trading night since the
+# last successful run (usually just tonight). Started by notes-desk-nightly.timer;
+# see README.md, "Scheduling" > "Fedora and other Linux (systemd timer)".
+[Unit]
+Description=Notes desk nightly run (fetch closes, value the notes, write the reports)
+
+[Service]
+Type=oneshot
+# The project folder; change this if yours is somewhere else.
+WorkingDirectory=%h/Downloads/notes_desk
+# Make sure the app is up (it normally already is), then catch up.
+ExecStartPre=/usr/bin/docker compose up -d --wait
+ExecStart=/usr/bin/docker compose exec -T app python3 notes_desk.py catch-up

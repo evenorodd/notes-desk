@@ -48,6 +48,15 @@ TYPE_LABELS = {"income": "Income", "buffered": "Buffered", "trigger_growth": "Tr
 
 # --- formatting --------------------------------------------------------------
 
+# Dates without a leading zero ("Feb 8"). strftime's %-d isn't available on
+# Windows, so the day is put in by hand.
+LONG_DATE, SHORT_DATE, DAY_DATE, FULL_DATE = "%B %-d, %Y", "%b %-d, %Y", "%a %b %-d, %Y", "%A, %B %-d, %Y"
+
+
+def dfmt(d, fmt):
+    return d.strftime(fmt.replace("%-d", str(d.day)))
+
+
 def esc(v):
     return html.escape("" if v is None else str(v))
 
@@ -256,7 +265,7 @@ def page(title, body, active="", script="", wide=False):
     links = [("/", "Dashboard", "dash"), ("/notes", "Notes", "notes"), ("/runs", "Runs", "runs")]
     nav = "".join(f'<a href="{h}" class="{"on" if k == active else ""}">{t}</a>' for h, t, k in links)
     snap = (f'<div class="snap"><div class="wrap">Read-only snapshot of the notes desk app, from the nightly run '
-            f'for {STATIC["date"]:%B %-d, %Y}. Click any CUSIP for its page.</div></div>') if STATIC["on"] else ""
+            f'for {dfmt(STATIC["date"], LONG_DATE)}. Click any CUSIP for its page.</div></div>') if STATIC["on"] else ""
     return f"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -272,7 +281,7 @@ def page(title, body, active="", script="", wide=False):
 def night_picker(path, d, nights, extra=""):
     if not nights or STATIC["on"]:
         return ""
-    opts = "".join(f'<option value="{n}"{" selected" if n == d else ""}>{n:%a %b %-d, %Y}</option>'
+    opts = "".join(f'<option value="{n}"{" selected" if n == d else ""}>{dfmt(n, DAY_DATE)}</option>'
                    for n in nights)
     return (f'<form method="get" action="{path}" class="controls">{extra}'
             f'<label class="check">Night <select name="date" onchange="this.form.submit()">{opts}</select></label>'
@@ -310,7 +319,7 @@ def dashboard(conn, query):
 
     run = db.rows(conn, """select status, message, finished_at from job_runs
                            where run_date = %s order by run_id desc limit 1""", (d,))
-    out = [f'<h1>Night of {d:%A, %B %-d, %Y}</h1>',
+    out = [f'<h1>Night of {dfmt(d, FULL_DATE)}</h1>',
            f'<p class="sub">From the nightly run for {d}. '
            f'<a href="/reports/morning_{d}.txt">Morning report</a> · '
            f'<a href="/reports/notes_{d}.csv">Every-note CSV</a></p>',
@@ -576,7 +585,7 @@ def svg_price_chart(points, levels, width=640, height=260):
                    f'<text x="{pad_l - 6}" y="{Y(v) + 4:.1f}" text-anchor="end">{v:,.0f}</text>')
     for o, anchor in ((x0, "start"), (x1, "end")):
         out.append(f'<text x="{X(o):.1f}" y="{height - 6}" text-anchor="{anchor}">'
-                   f'{datetime.date.fromordinal(o):%b %-d, %Y}</text>')
+                   f'{dfmt(datetime.date.fromordinal(o), SHORT_DATE)}</text>')
     for label, v, cls in levels:
         out.append(f'<line class="lvl {cls}" x1="{pad_l}" x2="{pad_l + W}" y1="{Y(v):.1f}" y2="{Y(v):.1f}"/>'
                    f'<text class="lvl-{cls}" x="{pad_l + W + 6}" y="{Y(v) + 4:.1f}">{esc(label)} {float(v):,.0f}</text>')
@@ -691,8 +700,8 @@ def note_page(conn, cusip, query):
         call_text, call_soon = "no call dates left", False
     else:
         call_soon = (next_call - today).days <= 30
-        call_text = (f"would be called if it closes here on {next_call:%b %-d, %Y}" if st and st[4] is not None and st[4] >= 0
-                     else f"below the call level; next call date {next_call:%b %-d, %Y}")
+        call_text = (f"would be called if it closes here on {dfmt(next_call, SHORT_DATE)}" if st and st[4] is not None and st[4] >= 0
+                     else f"below the call level; next call date {dfmt(next_call, SHORT_DATE)}")
         if not call_soon:
             call_text += f" ({(next_call - today).days} days away)"
     obs_rows = []
@@ -746,14 +755,14 @@ def note_page(conn, cusip, query):
 {f'<div class="tile {"good" if dc >= 0 and call_soon else ""}"><div class="k">Vs call trigger</div><div class="v">{pct(dc, True)}</div><div class="s">{call_text}</div></div>' if dc is not None else ""}
 </div>"""
     elif d and d < n["trade_date"]:
-        tiles = (f'<div class="panel"><p class="empty">This note was priced on {n["trade_date"]:%B %-d, %Y}, '
-                 f'so it has no results for {d:%B %-d, %Y}. Pick a later night.</p></div>')
+        tiles = (f'<div class="panel"><p class="empty">This note was priced on {dfmt(n["trade_date"], LONG_DATE)}, '
+                 f'so it has no results for {dfmt(d, LONG_DATE)}. Pick a later night.</p></div>')
     else:
         tiles = f'<div class="panel"><p class="empty">No nightly result for this note on {d}.</p></div>'
 
     body = f"""<p class="sub" style="margin-bottom:6px"><a href="/notes?date={d or ""}">← All notes</a></p>
 <h1><span class="mono" style="font-size:20px">{esc(cusip)}</span> · {esc(n["index_code"])} {esc(TYPE_LABELS.get(n["note_type"], n["note_type"]).lower())} note</h1>
-<p class="sub">{esc(n["issuer"])} · matures {n["maturity_date"]:%B %-d, %Y}{f" · values from the night of {d}" if d else ""}</p>
+<p class="sub">{esc(n["issuer"])} · matures {dfmt(n["maturity_date"], LONG_DATE)}{f" · values from the night of {d}" if d else ""}</p>
 {night_picker(f"/note/{esc(cusip)}", d, nights)}
 {tiles}
 <div class="row">

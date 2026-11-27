@@ -33,11 +33,14 @@ price file in `feeds/`. Later starts take seconds.
 | Stop it (the database is kept) | `Ctrl+C`, or `docker compose down` |
 | Start it again | `docker compose up` |
 | Fetch today's closes and run the nightly job | `docker compose exec app python3 notes_desk.py nightly --fetch` |
+| Run every night missed since the last run (what the schedule runs) | `docker compose exec app python3 notes_desk.py catch-up` |
 | Run any other command below | `docker compose exec app python3 notes_desk.py <command>` |
 | Start over with a fresh database | `docker compose down -v`, then `docker compose up` |
 
 The website is only reachable from your own computer. Reports and price files
-appear in your `reports/` and `feeds/` folders as usual.
+appear in your `reports/` and `feeds/` folders as usual. The app starts again
+by itself whenever Docker does (after a reboot, say), unless you stopped it
+with `docker compose down`.
 
 **Each trading night** (after 4:20 pm New York time), with Docker Desktop
 running, open a terminal in the project folder (on Windows: type `powershell`
@@ -53,17 +56,14 @@ means today in New York, whatever your computer's time zone. To pick up new
 code and price files from GitHub instead, see
 [Updating](#3-updating-to-the-latest-version).
 
-To schedule it on Windows, create a Task Scheduler task for weekdays at 6:15
-pm Eastern that runs `docker` with the arguments
-`compose -f C:\path\to\notes-desk\compose.yaml exec -T app python3 notes_desk.py nightly --fetch`
-(Docker Desktop must be running).
+To have it run by itself every weekday, see [Scheduling](#scheduling).
 
 ## Getting and updating the code
 
 The code lives at **https://github.com/evenorodd/notes-desk**. Git gets it
-once and then updates it in place with one command. That matters with Docker:
-it names the app after its folder, so a fresh copy in a new folder starts with
-a new, empty database instead of carrying on.
+once and then updates it in place with one command. (The Docker app keeps its
+database however you update: `compose.yaml` gives it a fixed name, so even a
+copy in a new folder carries on with the same database.)
 
 ### 1. Install Git (once)
 
@@ -157,6 +157,7 @@ python3 notes_desk.py fetch-prices 2026-11-23     # download that day's closes i
 python3 notes_desk.py price-template 2026-11-23   # or: a blank price file to type in
 python3 notes_desk.py nightly 2026-11-23          # load the prices, run the job, write the reports
 python3 notes_desk.py nightly --fetch             # fetch today's closes and run, in one step
+python3 notes_desk.py catch-up                    # run every night missed since the last run (for schedules)
 python3 notes_desk.py backfill 2026-01-01         # download history and replay every night since then
 python3 notes_desk.py add-notes new_notes.csv     # add notes, building their check dates
 python3 notes_desk.py serve                       # the website, at http://localhost:8000
@@ -204,7 +205,8 @@ The database does the financial work; Python handles files, scheduling and repor
 | `desk/notes.py` | `setup` and `add-notes`: read the CSV files, stage them, load them |
 | `desk/schedule.py` | Builds a note's check dates from its schedule |
 | `desk/prices.py` | Checks and stores closing prices |
-| `desk/nightly.py` | `nightly` and `price-template`: locking, job log, alerts |
+| `desk/nightly.py` | `nightly`, `catch-up` and `price-template`: locking, job log, alerts |
+| `desk/folder_owner.py` | In Docker, writes files as the project folder's owner rather than root |
 | `desk/fetch.py` | `fetch-prices`: gets closes from Yahoo Finance's daily price feed |
 | `desk/web.py` | `serve`: the local website (dashboard, notes, one page per note, runs) |
 | `desk/report.py` | The morning report and the every-note CSV |
@@ -308,7 +310,9 @@ python3 notes_desk.py fetch-prices 2026-11-23      # writes feeds/closes_2026-11
 python3 notes_desk.py nightly 2026-11-23
 ```
 
-or both in one step: `python3 notes_desk.py nightly 2026-11-23 --fetch`.
+or both in one step: `python3 notes_desk.py nightly 2026-11-23 --fetch`. To run
+every night since the last successful one (after a few days away, say):
+`python3 notes_desk.py catch-up`.
 
 No need to rerun setup. A run stops, is marked failed in `job_runs`, and raises
 an alert if the price file is missing, any price is blank, an underlier is
@@ -545,15 +549,69 @@ prices). The unit tests also run on their own with `python3 -m unittest`.
 
 ## Scheduling
 
-```cron
-CRON_TZ=America/Chicago
-15 18 * * 1-5  cd /opt/notes_desk && python3 notes_desk.py nightly --fetch >> /var/log/notes_desk/nightly.log 2>&1
+A schedule should run **`catch-up`**, not `nightly`. It downloads the closes
+since the last night that ran successfully and runs each trading night in
+order, so:
+
+- **Weekends and holidays** need nothing special: the market was closed, so
+  there are no closes, and there's nothing to run.
+- **A night missed** because the computer was off or asleep is run the next
+  time, in the right order.
+- **A failed night** (a missing price, say) stops the catch-up, raises an
+  alert, and is tried again next time; fix its price file in `feeds/` if
+  needed.
+
+Today's closes are final from 4:20 pm New York time, so schedule it for 5 pm
+New York time (4 pm Central) or later. Alerts go to the log. To post them to
+Slack too, set `NOTES_DESK_SLACK_WEBHOOK` to a Slack incoming-webhook URL.
+
+### Fedora and other Linux (systemd timer)
+
+`docker/systemd/` has a timer that runs `catch-up` inside Docker at 5 pm New
+York time every weekday, whatever your computer's time zone. If the computer
+was off then, it runs as soon as it's back. Set it up once (in the project
+folder; it assumes the project is in `~/Downloads/notes_desk`, so edit
+`WorkingDirectory` in the `.service` file if yours isn't):
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp docker/systemd/notes-desk-nightly.* ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now notes-desk-nightly.timer
+sudo loginctl enable-linger $USER     # keep running when you're logged out
+sudo systemctl enable --now docker    # start Docker when the computer starts
 ```
 
-With no date, `nightly` runs for today, and `--fetch` downloads the closes
-first, so nothing has to be typed. On a market holiday the fetch finds no
-closes and the run is marked failed with that reason. Alerts are printed to the log. To post
-them to Slack too, set `NOTES_DESK_SLACK_WEBHOOK` to a Slack incoming-webhook URL.
+| To | Run |
+|---|---|
+| See when it runs next | `systemctl --user list-timers notes-desk-nightly.timer` |
+| Run it now (it's safe: nothing new means nothing to do) | `systemctl --user start notes-desk-nightly.service` |
+| See what it did | `journalctl --user -u notes-desk-nightly -n 50` |
+| Turn it off | `systemctl --user disable --now notes-desk-nightly.timer` |
+
+After you copy updated code into the project folder, rebuild with
+`docker compose up --build -d`; the timer uses whatever is running.
+
+### Windows and Mac (Docker Desktop)
+
+Docker Desktop must be running (in its settings, turn on starting it when you
+sign in).
+
+- **Windows:** in Task Scheduler, create a task for weekdays at 5 pm New York
+  time in your computer's clock (4 pm Central, 3 pm Mountain, 2 pm Pacific),
+  tick "Run task as soon as possible after a scheduled start is missed", and
+  have it run `docker` with the arguments
+  `compose -f C:\path\to\notes-desk\compose.yaml exec -T app python3 notes_desk.py catch-up`.
+- **Mac:** run `crontab -e` and add (with your project's path):
+  `0 17 * * 1-5 /usr/local/bin/docker compose -f /path/to/notes-desk/compose.yaml exec -T app python3 notes_desk.py catch-up >> /tmp/notes_desk.log 2>&1`
+  (`0 17` is 5 pm on your Mac's clock; change it if you're not in New York time).
+
+### Without Docker (cron)
+
+```cron
+CRON_TZ=America/New_York
+0 17 * * 1-5  cd /opt/notes_desk && python3 notes_desk.py catch-up >> /var/log/notes_desk/nightly.log 2>&1
+```
 
 ## Simplifications
 
@@ -696,6 +754,7 @@ Quit Claude Desktop completely and start it again. The tools appear under
 
 With `docker compose up` running, point the client at the container. The
 `-T` matters: it gives the server plain input and output instead of a terminal.
+For Claude Code: `claude mcp add -s user --transport stdio notes-desk -- docker compose -f /full/path/to/notes-desk/compose.yaml exec -T app python3 notes_desk.py mcp`.
 
 ```json
 {

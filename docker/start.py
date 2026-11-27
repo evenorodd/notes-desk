@@ -10,33 +10,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from desk import FEEDS_DIR, DeskError, db   # noqa: E402
+from desk.folder_owner import run_as_folder_owner   # noqa: E402
 
 APP = [sys.executable, str(Path(__file__).resolve().parent.parent / "notes_desk.py")]
-
-
-def run_as_folder_owner(app_dir):
-    """Containers start as root, so files written into the shared folders
-    (reports/, export/) would belong to root on the host and later block runs
-    without Docker. Switch to whoever owns the project folder instead.
-    On Docker Desktop (Mac, Windows) the folder usually shows as root's; then
-    nothing changes, and nothing needs to."""
-    if os.geteuid() != 0:
-        return
-    st = (app_dir / "feeds").stat()
-    uid, gid = st.st_uid, st.st_gid
-    if uid == 0:
-        return
-    for name in ("reports", "export"):            # Docker creates missing ones as root
-        folder = app_dir / name
-        folder.mkdir(exist_ok=True)
-        for p in [folder, *folder.rglob("*")]:
-            try:
-                os.chown(p, uid, gid)
-            except OSError:
-                pass
-    os.setgroups([])
-    os.setgid(gid)
-    os.setuid(uid)
 
 
 run_as_folder_owner(Path(__file__).resolve().parent.parent)

@@ -1,8 +1,7 @@
 """One night's run: load the day's prices, run the job, write the reports.
 
-Scheduled with cron at 6:15 pm Central on weekdays, after the US close:
-    CRON_TZ=America/Chicago
-    15 18 * * 1-5  cd /opt/notes_desk && python3 notes_desk.py nightly --fetch >> /var/log/notes_desk/nightly.log 2>&1
+For a schedule, use catch-up (below) rather than nightly: it runs every
+trading night since the last successful run (README.md, "Scheduling").
 
 Every run is recorded in the job_runs table. If anything is wrong (no price
 file, a blank or implausible price, a database error), the run stops, is
@@ -166,3 +165,44 @@ def price_template(run_date, force=False):
     csvfiles.write_rows(path, csvfiles.PRICE_COLUMNS, [[c, run_date, None] for c in codes])
     print(f"Wrote {path} with {len(codes)} underliers. Fill in each close, "
           f"then run: python3 notes_desk.py nightly {run_date}")
+
+
+def catch_up():
+    """Every trading night since the last successful run, in order: what a
+    schedule should run. The download only has closes for days the market was
+    open (and for today only once it has closed), so weekends, holidays and an
+    early start need no special handling; a night missed while the computer was
+    off is simply run next time."""
+    from . import market_today
+    from .backfill import _download, _nights
+    conn = db.connect()
+    try:
+        last = db.scalar(conn, "select max(run_date) from job_runs where status = 'ok'")
+        codes = [r[0] for r in db.rows(conn, "select index_code from indices order by 1")]
+    finally:
+        conn.close()
+    today = market_today()
+    if last is None:
+        raise DeskError("No night has run successfully yet. Start the history with: "
+                        "python3 notes_desk.py backfill 2026-01-01")
+    start = last + datetime.timedelta(days=1)
+    if start > today:
+        log(today, f"nothing to do: {last} has already run")
+        return []
+
+    log(today, f"catching up: closes from {start} to {today}")
+    try:
+        _download(codes, start, today, force=False)
+    except DeskError as e:
+        # "No data" for every underlier just means no trading days in the period.
+        if not (e.problems and all("no data" in p.lower() for p in e.problems)):
+            alert(today, f"catch-up couldn't download closes: {e}" + "".join(f"\n  {p}" for p in e.problems))
+            raise
+    nights = _nights(start, today)
+    if not nights:
+        log(today, f"no new closes since {last} (a weekend or holiday, or today's close isn't final "
+                   "until 4:20 pm New York time)")
+        return []
+    for d in nights:
+        run(d)   # stops at the first night that fails; the next catch-up retries it
+    return nights

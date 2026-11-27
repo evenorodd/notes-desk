@@ -81,3 +81,29 @@ class ParseChart(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WhyNoCloses(unittest.TestCase):
+    """The message when the feed has no close at all for the date asked for."""
+    THANKSGIVING = datetime.date(2026, 11, 26)
+
+    def why(self, run_date, now, found=None):
+        from desk.fetch import why_no_closes
+        found = found if found is not None else {"SPX": {datetime.date(2026, 11, 25): Decimal("1")}}
+        return str(why_no_closes(run_date, found, now=now.replace(tzinfo=NY)))
+
+    def test_too_early_today(self):
+        self.assertIn("aren't final until 16:20", self.why(MON, datetime.datetime(2026, 11, 23, 15, 0)))
+
+    def test_holiday_today_after_five(self):
+        self.assertIn("market holiday", self.why(self.THANKSGIVING, datetime.datetime(2026, 11, 26, 17, 30)))
+
+    def test_maybe_late_feed_just_after_the_close(self):
+        self.assertIn("running late", self.why(self.THANKSGIVING, datetime.datetime(2026, 11, 26, 16, 30)))
+
+    def test_past_holiday_with_later_closes(self):
+        found = {"SPX": {datetime.date(2026, 11, 25): Decimal("1"), datetime.date(2026, 11, 27): Decimal("1")}}
+        self.assertIn("market holiday", self.why(self.THANKSGIVING, datetime.datetime(2026, 11, 28, 9), found))
+
+    def test_weekend(self):
+        self.assertIn("weekend", self.why(datetime.date(2026, 11, 21), datetime.datetime(2026, 11, 23, 9)))

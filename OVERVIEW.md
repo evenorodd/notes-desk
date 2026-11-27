@@ -34,7 +34,7 @@ code from GitHub on Windows, Mac and Linux.
 | `sql/` | Builds the database (the tables) and holds the nightly valuation logic | No |
 | `tests/` | Checks the logic still works | No |
 | `notes_desk.py` | The one file you run | No |
-| `Dockerfile`, `compose.yaml`, `docker/` | Run everything, database included, with one command: `docker compose up --build` | No |
+| `Dockerfile`, `compose.yaml`, `docker/` | Run everything, database included, with one command: `docker compose up --build`. `docker/systemd/` has the nightly timer for Linux | No |
 
 ## The commands
 
@@ -42,6 +42,7 @@ code from GitHub on Windows, Mac and Linux.
 |---|---|
 | `setup` | Once, or to rebuild from scratch. It builds the database from `real_notes/`; then `backfill --no-download` reloads `feeds/`. |
 | `nightly DATE --fetch` | Every trading night. It gets prices, values the notes and writes the reports. |
+| `catch-up` | What a schedule runs: every trading night since the last successful run, so missed nights and holidays take care of themselves. |
 | `backfill START` | Downloads history and replays every night since START (e.g. `2026-01-01`), then checks each note's starting level against the close on its trade date. |
 | `fetch-prices` / `price-template` | Get a night's prices on their own (downloaded, or a blank file to type in). |
 | `add-notes FILE` | When new notes are bought. |
