@@ -74,6 +74,9 @@ def run_tests():
     print("\nDatabase tests (tests/test_nightly.sql, rolled back afterwards):")
     conn = db.connect()
     try:
+        # Test this version's nightly logic, not whatever the database last loaded
+        # (rolled back with everything else, so the database itself is unchanged).
+        db.run_file(conn, PROJECT_DIR / "sql" / "03_nightly_job.sql")
         db.run_file(conn, PROJECT_DIR / "tests" / "test_nightly.sql")
         print("All database tests passed.")
         db_ok = True

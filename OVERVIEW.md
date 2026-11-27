@@ -73,7 +73,7 @@ Run `python3 notes_desk.py COMMAND -h` to see a command's options (for example,
 
 **4. Nightly results (written by the nightly job)**
 - `note_daily_status`: each note's value each night, with cushion, distance to call and payout. **This is what the reports are built from.**
-- `events`: things coming up or already wrong, such as likely calls, coupons at risk and notes below protection
+- `events`: every coupon, call and maturity check in the next 30 days with how it looks (likely call, coupon on track or at risk…), plus notes already below protection
 - `concentration_breaches`: an advisor with too much money linked to one underlier
 - `job_runs`: one row per run, saying whether it succeeded, failed or warned, and why
 

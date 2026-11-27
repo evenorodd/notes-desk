@@ -224,6 +224,8 @@ def upcoming_events(conn, days=30, flag=None, date=None):
         order by e.flag = 'below_protection', e.obs_date, e.notional desc""", params)
     return {"night": d.isoformat(), "count": len(rows), "events": rows,
             "flags": {"likely_call": "at or above the call trigger ahead of a call date",
+                      "call_unlikely": "below the call trigger ahead of a call date",
+                      "coupon_on_track": "more than 10% above the coupon barrier ahead of a coupon date",
                       "coupon_at_risk": "within 10% of the coupon barrier ahead of a coupon date",
                       "coupon_missed_if_today": "below the coupon barrier ahead of a coupon date",
                       "maturing": "final valuation coming up", "maturing_with_loss": "final valuation coming up, below protection",
@@ -338,12 +340,13 @@ TOOLS = [
     },
     {
         "name": "upcoming_events",
-        "description": "Flags from one night's run: likely calls, coupons at risk or missed, maturities in the "
-                       "next N days, plus notes already below protection.",
+        "description": "Every coupon, call and maturity check in the next N days from one night's run, each "
+                       "flagged (likely call or not, coupon on track, at risk or missed, maturing), plus notes "
+                       "already below protection.",
         "input_schema": {
             "type": "object",
             "properties": {"days": {"type": "integer", "description": "Look-ahead in days, default 30 (the job flags up to 30)."},
-                           "flag": {"type": "string", "enum": ["likely_call", "coupon_at_risk", "coupon_missed_if_today",
+                           "flag": {"type": "string", "enum": ["likely_call", "call_unlikely", "coupon_on_track", "coupon_at_risk", "coupon_missed_if_today",
                                                                "maturing", "maturing_with_loss", "below_protection"]},
                            "date": DATE},
             "additionalProperties": False,

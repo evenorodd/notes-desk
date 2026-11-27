@@ -32,13 +32,15 @@ STATIC = {"on": False, "date": None}   # set by export(): pages rendered as file
 
 FLAG_LABELS = {
     "likely_call": "Likely call",
+    "call_unlikely": "Call date, not called at today's price",
+    "coupon_on_track": "Coupon on track",
     "coupon_missed_if_today": "Coupon would be missed",
     "coupon_at_risk": "Coupon at risk",
     "maturing": "Maturing",
     "maturing_with_loss": "Maturing with a loss",
     "below_protection": "Below protection",
 }
-FLAG_TONE = {"likely_call": "good", "coupon_missed_if_today": "bad", "coupon_at_risk": "warn",
+FLAG_TONE = {"likely_call": "good", "call_unlikely": "neutral", "coupon_on_track": "good", "coupon_missed_if_today": "bad", "coupon_at_risk": "warn",
              "maturing": "neutral", "maturing_with_loss": "bad", "below_protection": "bad"}
 TYPE_LABELS = {"income": "Income", "buffered": "Buffered", "trigger_growth": "Trigger growth",
                "protected": "Principal-protected"}
@@ -400,7 +402,8 @@ def dashboard(conn, query):
         order by e.obs_date, e.notional desc""", (d,))
     erows = []
     for od, c, u, kind, flag, notional, cu, ccu, dc in rows:
-        measure = {"likely_call": ("above call trigger", dc), "coupon_at_risk": ("above coupon barrier", ccu),
+        measure = {"likely_call": ("above call trigger", dc), "call_unlikely": ("vs call trigger", dc),
+                   "coupon_on_track": ("above coupon barrier", ccu), "coupon_at_risk": ("above coupon barrier", ccu),
                    "coupon_missed_if_today": ("above coupon barrier", ccu)}.get(flag, ("cushion", cu))
         erows.append("<tr>" + cell(str(od), od) + cell(f'<a class="mono" href="/note/{esc(c)}?date={d}">{esc(c)}</a>', c)
                      + cell(esc(u), u) + cell(chip(FLAG_LABELS.get(flag, flag), FLAG_TONE.get(flag, "neutral")), flag)
@@ -421,7 +424,8 @@ def dashboard(conn, query):
 <div class="row">
 <div class="grow"><div class="panel"><h2>Underliers</h2>
 <p class="note">Click one to see the notes linked to it.</p>{underliers}</div></div>
-<div class="grow"><div class="panel"><h2>Coming up in the next 30 days</h2>{events}</div>
+<div class="grow"><div class="panel"><h2>Coming up in the next 30 days</h2>
+<p class="note">Every coupon, call and final-valuation date, and how each looks at this night's close.</p>{events}</div>
 <div class="panel"><h2>Concentration breaches</h2>{conc}</div></div>
 </div>""")
     return page(f"Night of {d}", "".join(out), "dash")
@@ -457,18 +461,21 @@ def notes_page(conn, query):
         select n.cusip, i.name, n.note_type, n.index_code, n.trade_date, n.maturity_date, n.initial_level,
                s.index_level, s.perf, s.cushion, s.coupon_cushion, s.dist_to_call, s.payout_per_1000,
                (select min(o.obs_date) from observation_dates o where o.note_id = n.note_id and o.obs_date > %s),
-               n.status
+               n.status,
+               (select string_agg(o.kind, ' + ' order by o.kind) from observation_dates o
+                where o.note_id = n.note_id and o.obs_date = (select min(x.obs_date) from observation_dates x
+                                                              where x.note_id = n.note_id and x.obs_date > %s))
         from notes n join issuers i using (issuer_id)
         left join note_daily_status s on s.note_id = n.note_id and s.run_date = %s
         where %s::date is null or n.trade_date <= %s::date   -- only notes in the book that night
-        order by s.cushion nulls last, n.cusip""", (d, d, d, d))
+        order by s.cushion nulls last, n.cusip""", (d, d, d, d, d))
     pick_u = (query.get("u") or [""])[0]
     pick_t = (query.get("type") or [""])[0]
     underliers = sorted({r[3] for r in rows})
     types = sorted({r[2] for r in rows})
 
     trs = []
-    for (c, issuer, t, u, td, md, init, close, perf, cu, ccu, dc, pay, nxt, status) in rows:
+    for (c, issuer, t, u, td, md, init, close, perf, cu, ccu, dc, pay, nxt, status, nxt_kind) in rows:
         text = " ".join(str(x) for x in (c, issuer, t, u)).lower()
         trs.append(f'<tr data-type="{esc(t)}" data-u="{esc(u)}" data-text="{esc(text)}" '
                    f'data-below="{1 if cu is not None and cu < 0 else 0}">'
@@ -483,7 +490,8 @@ def notes_page(conn, query):
                    + cell(pct(ccu, True) if ccu is not None else "—", ccu, "n")
                    + cell(pct(dc, True) if dc is not None else "—", dc, "n")
                    + cell(money(pay, True), pay, "n")
-                   + cell(str(nxt or "—"), nxt) + cell(str(md), md) + "</tr>")
+                   + cell(f'{nxt} <span class="note">{esc(nxt_kind)}</span>' if nxt else "—", nxt)
+                   + cell(str(md), md) + "</tr>")
 
     topts = '<option value="">All types</option>' + "".join(
         f'<option value="{esc(t)}"{" selected" if t == pick_t else ""}>{esc(TYPE_LABELS.get(t, t))}</option>' for t in types)
@@ -677,6 +685,16 @@ def note_page(conn, cusip, query):
                            where note_id = %s group by obs_date order by obs_date""", (n["note_id"],))
     today = d or datetime.date.today()
     next_d = next((od for od, _ in obs if od > today), None)
+    next_call = db.scalar(conn, """select min(obs_date) from observation_dates
+                                   where note_id = %s and kind = 'call' and obs_date > %s""", (n["note_id"], today))
+    if next_call is None:
+        call_text, call_soon = "no call dates left", False
+    else:
+        call_soon = (next_call - today).days <= 30
+        call_text = (f"would be called if it closes here on {next_call:%b %-d, %Y}" if st and st[4] is not None and st[4] >= 0
+                     else f"below the call level; next call date {next_call:%b %-d, %Y}")
+        if not call_soon:
+            call_text += f" ({(next_call - today).days} days away)"
     obs_rows = []
     for od, kinds in obs:
         cls = "t-good" if od == next_d else ("" if od > today else "note")
@@ -725,7 +743,7 @@ def note_page(conn, cusip, query):
 <div class="tile {tone(cu)}"><div class="k">Cushion</div><div class="v">{pct(cu, True) if cu is not None else "None needed"}</div><div class="s">{"principal can't be lost at maturity" if cu is None else "room before principal is lost" if cu >= 0 else "past the protection level"}</div></div>
 <div class="tile"><div class="k">Per $1,000 if it matured today</div><div class="v">{money(pay, True)}</div><div class="s">{"principal only, coupons extra" if n["note_type"] == "income" else "principal plus any gain"}</div></div>
 {f'<div class="tile {tone(ccu)}"><div class="k">Above coupon barrier</div><div class="v">{pct(ccu, True)}</div><div class="s">negative on a coupon date: no coupon</div></div>' if ccu is not None else ""}
-{f'<div class="tile {"good" if dc >= 0 else ""}"><div class="k">Vs call trigger</div><div class="v">{pct(dc, True)}</div><div class="s">{"would be called on a call date" if dc >= 0 else "below the call level"}</div></div>' if dc is not None else ""}
+{f'<div class="tile {"good" if dc >= 0 and call_soon else ""}"><div class="k">Vs call trigger</div><div class="v">{pct(dc, True)}</div><div class="s">{call_text}</div></div>' if dc is not None else ""}
 </div>"""
     elif d and d < n["trade_date"]:
         tiles = (f'<div class="panel"><p class="empty">This note was priced on {n["trade_date"]:%B %-d, %Y}, '

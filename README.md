@@ -387,8 +387,8 @@ historical data).
 Each run writes two files to `reports/`:
 
 - **`morning_<date>.txt`**: the live book; notes by type; the 15 notes closest
-  to losing principal; events in the next 30 days (likely calls, coupons at
-  risk or missed, maturities) plus notes already below their buffer or barrier;
+  to losing principal; every check in the next 30 days (calls likely
+  or not, coupons on track, at risk or missed, maturities) plus notes already below their buffer or barrier;
   and concentration breaches.
 - **`notes_<date>.csv`**: every note's close, cushion, distance to its call
   trigger, value per $1,000 if it matured today, next check date and filing

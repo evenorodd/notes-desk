@@ -48,10 +48,14 @@ begin
     assert round(s.cushion, 6) = 0.10,      format('cushion should be 10%%, got %s', s.cushion);
     assert round(s.dist_to_call, 6) = -0.23, format('distance to call should be -23%%, got %s', s.dist_to_call);
 
-    -- A call check on Jan 4 is within 30 days but the index is below the trigger: no event.
+    -- A call check on Jan 4 is within 30 days but the index is below the trigger:
+    -- listed as a call date, not as a likely call.
+    assert exists (select 1 from events ev join notes n using (note_id)
+                   where n.cusip = 'TEST00001' and ev.run_date = '2027-01-01' and ev.flag = 'call_unlikely'),
+           'a call date below the trigger should be listed as call_unlikely';
     assert not exists (select 1 from events ev join notes n using (note_id)
-                       where n.cusip = 'TEST00001' and ev.run_date = '2027-01-01'),
-           'no call should be flagged while the index is below the trigger';
+                       where n.cusip = 'TEST00001' and ev.run_date = '2027-01-01' and ev.flag = 'likely_call'),
+           'no call should be flagged as likely while the index is below the trigger';
 
     -- Running the same day twice must give identical results.
     select count(*) into n1 from events where run_date = '2027-01-01';

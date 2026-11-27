@@ -110,15 +110,18 @@ begin
     get diagnostics n = row_count;
     step := 'notes matured today'; rows_affected := n; return next;
 
-    -- 4. Flag what is coming up in the next 30 days.
+    -- 4. Every check in the next 30 days, each with a flag saying how it
+    --    looks at tonight's close (good news included, so nothing is hidden).
     delete from events where run_date = p_run_date;
     insert into events (run_date, note_id, obs_date, kind, flag, notional)
     select * from (
         select p_run_date, o.note_id, o.obs_date, o.kind,
                case
                    when o.kind = 'call'     and s.dist_to_call >= 0     then 'likely_call'
+                   when o.kind = 'call'                                 then 'call_unlikely'
                    when o.kind = 'coupon'   and s.coupon_cushion < 0    then 'coupon_missed_if_today'
                    when o.kind = 'coupon'   and s.coupon_cushion < 0.10 then 'coupon_at_risk'
+                   when o.kind = 'coupon'                               then 'coupon_on_track'
                    when o.kind = 'maturity' and s.cushion < 0           then 'maturing_with_loss'
                    when o.kind = 'maturity'                             then 'maturing'
                end as flag,
