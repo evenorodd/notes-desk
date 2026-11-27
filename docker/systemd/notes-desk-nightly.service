@@ -1,6 +1,6 @@
-# Runs the notes desk's catch-up inside Docker: every trading night since the
-# last successful run (usually just tonight). Started by notes-desk-nightly.timer;
-# see README.md, "Scheduling" > "Fedora and other Linux (systemd timer)".
+# The notes desk's nightly run (docker/systemd/nightly.sh), started by
+# notes-desk-nightly.timer. See README.md, "Scheduling" > "Fedora and other
+# Linux (systemd timer)".
 [Unit]
 Description=Notes desk nightly run (fetch closes, value the notes, write the reports)
 
@@ -8,6 +8,8 @@ Description=Notes desk nightly run (fetch closes, value the notes, write the rep
 Type=oneshot
 # The project folder; change this if yours is somewhere else.
 WorkingDirectory=%h/Downloads/notes_desk
-# Make sure the app is up (it normally already is), then catch up.
-ExecStartPre=/usr/bin/docker compose up -d --wait
-ExecStart=/usr/bin/docker compose exec -T app python3 notes_desk.py catch-up
+# Start the app if needed, run every missed night, push new price files in
+# feeds/ (only those) to GitHub, and show a desktop notification with the result.
+ExecStart=/bin/sh %h/Downloads/notes_desk/docker/systemd/nightly.sh
+# To keep new price files on this computer instead of pushing them, remove the #:
+#Environment=NOTES_DESK_PUSH=0

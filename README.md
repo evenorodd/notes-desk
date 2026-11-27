@@ -569,9 +569,15 @@ Slack too, set `NOTES_DESK_SLACK_WEBHOOK` to a Slack incoming-webhook URL.
 
 `docker/systemd/` has a timer that runs `catch-up` inside Docker at 5 pm New
 York time every weekday, whatever your computer's time zone. If the computer
-was off then, it runs as soon as it's back. Set it up once (in the project
-folder; it assumes the project is in `~/Downloads/notes_desk`, so edit
-`WorkingDirectory` in the `.service` file if yours isn't):
+was off then, it runs as soon as it's back. After a successful run it commits
+and pushes any new price files in `feeds/` to GitHub (only those: nothing else
+in the folder is ever committed), so other copies get them with `git pull`.
+Then a desktop notification says how it went: which nights ran, any price to
+double-check, whether the push worked, or why the run failed.
+
+The timer runs `docker/systemd/nightly.sh`. Set it up once (in the project
+folder; it assumes the project is in `~/Downloads/notes_desk`, so change that
+path in the `.service` file, twice, if yours isn't):
 
 ```bash
 mkdir -p ~/.config/systemd/user
@@ -588,6 +594,16 @@ sudo systemctl enable --now docker    # start Docker when the computer starts
 | Run it now (it's safe: nothing new means nothing to do) | `systemctl --user start notes-desk-nightly.service` |
 | See what it did | `journalctl --user -u notes-desk-nightly -n 50` |
 | Turn it off | `systemctl --user disable --now notes-desk-nightly.timer` |
+| Push price files by hand | `sh docker/systemd/push-prices.sh` |
+
+To keep the price files local instead, remove the `#` in front of
+`Environment=NOTES_DESK_PUSH=0` in
+`~/.config/systemd/user/notes-desk-nightly.service`, then
+`systemctl --user daemon-reload`. Notifications only show while you're logged
+in; a run while you're logged out still happens, just silently. The push needs Git to sign in to GitHub
+without asking, e.g. through GitHub's `gh` tool (`gh auth setup-git`). If a
+push fails (no internet, or GitHub has changes you don't have), the commit is
+kept and goes up with the next push; the log says what happened.
 
 After you copy updated code into the project folder, rebuild with
 `docker compose up --build -d`; the timer uses whatever is running.
