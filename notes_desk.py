@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Notes desk: nightly monitoring of structured notes in PostgreSQL.
 
-    python3 notes_desk.py setup                     build the database (reads my_history.csv)
+    python3 notes_desk.py setup                     build the database from real_notes/
     python3 notes_desk.py fetch-prices 2026-11-23   download that day's closes into the price file
     python3 notes_desk.py price-template 2026-11-23 or: a blank price file to type in
     python3 notes_desk.py nightly 2026-11-23        load the prices, run the job, write the reports

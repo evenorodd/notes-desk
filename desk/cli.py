@@ -21,10 +21,11 @@ def main(argv=None):
         description="Nightly monitoring of structured notes. Run a command with -h for its details.")
     sub = p.add_subparsers(dest="command", required=True, metavar="command")
 
-    s = sub.add_parser("setup", help="build the database from real_notes/*.csv and your price history",
+    s = sub.add_parser("setup", help="build the database from real_notes/*.csv (prices then come from feeds/ via backfill --no-download)",
                        description="Drops and recreates the database, loads every note in real_notes/ "
-                                   "and the prices in the history file.")
-    s.add_argument("history", nargs="?", type=Path, help="price history CSV (default: my_history.csv)")
+                                   "and, if one is given (or my_history.csv exists), the prices in a history file. "
+                                   "Then run backfill --no-download to load feeds/ and run every night.")
+    s.add_argument("history", nargs="?", type=Path, help="optional extra price history CSV (index_code,price_date,close); normally not needed")
 
     s = sub.add_parser("price-template", help="write a blank price file for a date",
                        description="Writes feeds/closes_DATE.csv with a blank row for every underlier.")

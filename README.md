@@ -151,7 +151,8 @@ Needs Python 3.9 or later, PostgreSQL, and the psycopg driver (setup on
 Fedora is below). Then:
 
 ```bash
-python3 notes_desk.py setup                       # build the database (reads my_history.csv)
+python3 notes_desk.py setup                       # build the database from real_notes/
+python3 notes_desk.py backfill --no-download      # load every price file in feeds/ and run each night
 python3 notes_desk.py fetch-prices 2026-11-23     # download that day's closes into the price file
 python3 notes_desk.py price-template 2026-11-23   # or: a blank price file to type in
 python3 notes_desk.py nightly 2026-11-23          # load the prices, run the job, write the reports
@@ -214,7 +215,6 @@ The database does the financial work; Python handles files, scheduling and repor
 | `sql/03_nightly_job.sql` | `note_payout_per_1000()`: payout rules for every note type. `run_nightly(date)`: the nightly job |
 | `sql/04_load_real_notes.sql` | Checks and loads notes (used by `setup` and `add-notes`) |
 | `real_notes/` | The notes, their check dates, and a template for new notes |
-| `my_history.csv` | Your starting prices, filled in before setup |
 | `tests/` | Unit tests (`test_*.py`) and database tests (`test_nightly.sql`) |
 
 ## Installing
@@ -279,33 +279,25 @@ capitals; dates as `YYYY-MM-DD`; prices as plain numbers (`6910.39`, not
 `$6,910.39`). Use the index itself, not its futures (SPX, not ES). Files saved
 from Excel or LibreOffice are fine.
 
-### First run, for Fri 2026-11-20
+### First run
 
-1. **Check `my_history.csv`.** It comes filled in with the real 2026-11-19
-   close for all 15 underliers, the trading day before the first run: the
-   nightly load checks each close against the previous one. (Each note's
-   starting level is part of its terms in `real_notes/notes.csv`, so no older
-   prices are needed.) Compare them with your own data and correct any that
-   differ.
+`feeds/` already holds a price file for every trading day since January 2,
+2026. Build the database, then replay those nights in order:
 
-   Setup stops and lists any price that's blank. Extra history is fine.
+```bash
+python3 notes_desk.py setup
+python3 notes_desk.py backfill --no-download
+```
 
-2. **Set up:**
+Setup loads the notes from `real_notes/` (each note's starting level is part of
+its terms, so no older prices are needed). The backfill loads each price file,
+runs that night, applies every coupon, call and maturity check on its own date,
+and writes the reports for the latest night. With Docker, the first
+`docker compose up` does both of these for you.
 
-   ```bash
-   python3 notes_desk.py setup
-   ```
-
-3. **The night's price file is already there:** `feeds/closes_2026-11-20.csv`
-   holds the real 2026-11-20 closes. (For later dates, `price-template` makes a
-   blank one; see below.)
-
-4. **Run the night:**
-
-   ```bash
-   python3 notes_desk.py nightly 2026-11-20
-   cat reports/morning_2026-11-20.txt
-   ```
+To bring the history up to today, add `--fetch` runs for the missing nights, or
+download them all at once: `python3 notes_desk.py backfill 2026-01-01` (it keeps
+the price files already there).
 
 ### Each later day
 
@@ -336,9 +328,11 @@ A check date with no close (a market holiday) is taken at the next night's
 close, as the filings specify: each run applies every call and maturity check
 dated since the previous run.
 
-Setup rebuilds the database, so it reloads only the prices in `my_history.csv`;
-put any history you want to keep there. If setup says the database is open
-somewhere else, disconnect pgAdmin (right-click the server, Disconnect) first.
+Setup rebuilds the database from scratch, so follow it with
+`backfill --no-download` to reload every price file in `feeds/` and rerun the
+nights. The price files are the record, so nothing is lost. If setup says the
+database is open somewhere else, disconnect pgAdmin (right-click the server,
+Disconnect) first.
 
 ### Fetching prices automatically
 
@@ -497,8 +491,8 @@ python3 notes_desk.py add-notes my_new_notes.csv my_extra_dates.csv
 ```
 
 **New underliers.** A note on a new stock adds the stock automatically. The
-next nightly price file needs its close (`price-template` includes it), and to
-keep it across a setup rebuild, add a row for it to `my_history.csv`.
+next nightly price file needs its close (`fetch-prices` and `price-template`
+include it).
 
 ## Fixing notes
 

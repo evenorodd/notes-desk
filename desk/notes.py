@@ -34,11 +34,16 @@ def _load(conn):
 
 
 def setup(history_path=None):
-    history_path = history_path or HISTORY_CSV
+    # Prices come from the price files in feeds/ (backfill --no-download replays
+    # them). An extra history file is optional: my_history.csv if it's there,
+    # or one named on the command line, which then must exist.
+    if history_path is not None and not history_path.exists():
+        raise DeskError(f"Can't find the price history file {history_path}.")
+    history_path = history_path or (HISTORY_CSV if HISTORY_CSV.exists() else None)
     # Read every file first, so a typo is caught before the database is dropped.
     notes = csvfiles.read_notes(NOTES_CSV)
     observations = csvfiles.read_observations(OBS_CSV)
-    history = csvfiles.read_prices(history_path)
+    history = csvfiles.read_prices(history_path) if history_path else []
 
     name = db.database_name()
     if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
@@ -67,11 +72,12 @@ def setup(history_path=None):
         _stage(conn, notes, observations)
         db.scalar(conn, "select real_notes_underliers()")   # so prices for every underlier can load
 
-        print(f"Loading price history from {history_path.name} ...")
-        problems = prices.history_problems(conn, history)
-        if problems:
-            raise DeskError(f"{history_path.name} has problems. Fix these and run setup again:", problems)
-        prices.store(conn, history)
+        if history_path:
+            print(f"Loading price history from {history_path.name} ...")
+            problems = prices.history_problems(conn, history)
+            if problems:
+                raise DeskError(f"{history_path.name} has problems. Fix these and run setup again:", problems)
+            prices.store(conn, history)
 
         print(_load(conn))
         conn.commit()
@@ -83,9 +89,8 @@ def setup(history_path=None):
         conn.close()
 
     print("Notes by type: " + ", ".join(f"{t} {n}" for t, n in counts))
-    print("Setup complete.")
-    print("Next: python3 notes_desk.py price-template YYYY-MM-DD, fill in feeds/closes_YYYY-MM-DD.csv,")
-    print("      then python3 notes_desk.py nightly YYYY-MM-DD")
+    print("Setup complete. The database has the notes but no prices or results yet.")
+    print("Next: python3 notes_desk.py backfill --no-download   (runs every night in feeds/, oldest first)")
 
 
 def add_notes(path, extra_dates_path=None, assume_yes=False):
@@ -166,5 +171,4 @@ def add_notes(path, extra_dates_path=None, assume_yes=False):
               "Add them to those files by hand, or they'll be missing after the next setup.")
     if new_underliers:
         print(f"New underliers: {', '.join(new_underliers)}. The next nightly price file needs a close "
-              "for each (price-template includes them).\nTo keep them across a setup rebuild, add a "
-              "row for each to my_history.csv.")
+              "for each (price-template and fetch-prices include them).")

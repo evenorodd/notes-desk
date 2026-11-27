@@ -10,9 +10,8 @@ code from GitHub on Windows, Mac and Linux.
 ```
   INPUTS (CSV files)              THE APP (Python + SQL)              OUTPUTS
   ------------------              ----------------------              -------
-  real_notes/  the notes ──┐
-  my_history.csv          ─┼─► setup ──────► PostgreSQL database
-                           │                       │
+  real_notes/  the notes ────► setup ──────► PostgreSQL database
+                                                   │
   feeds/closes_DATE.csv ◄── fetch-prices (Yahoo)   │
           │                                        ▼
           └──────────────────► nightly ──► values every note ──► reports/morning_DATE.txt
@@ -29,8 +28,7 @@ code from GitHub on Windows, Mac and Linux.
 | Folder / file | What's in it | Do you edit it? |
 |---|---|---|
 | `real_notes/` | The 75 notes' terms from SEC filings (`notes.csv`), their check dates (`observation_dates.csv`), and a template for adding notes | Only through `add-notes` |
-| `my_history.csv` | One earlier close per underlier, so the first night has something to compare against | Rarely |
-| `feeds/` | One price file per night, `closes_DATE.csv`, which also serves as a record of what was loaded | Only to fix a bad price |
+| `feeds/` | One price file per trading day since January 2, 2026 (`closes_DATE.csv`): the price history and the record of what was loaded | Only to fix a bad price |
 | `reports/` | The output: the morning report and the every-note CSV for each night | No, you read these |
 | `desk/` | The Python code, one file per command (`tools.py` and `mcp_server.py` are the AI assistant's tools) | No |
 | `sql/` | Builds the database (the tables) and holds the nightly valuation logic | No |
@@ -42,7 +40,7 @@ code from GitHub on Windows, Mac and Linux.
 
 | Command | When |
 |---|---|
-| `setup` | Once, or to rebuild from scratch. It builds the database from `real_notes/` and `my_history.csv`. |
+| `setup` | Once, or to rebuild from scratch. It builds the database from `real_notes/`; then `backfill --no-download` reloads `feeds/`. |
 | `nightly DATE --fetch` | Every trading night. It gets prices, values the notes and writes the reports. |
 | `backfill START` | Downloads history and replays every night since START (e.g. `2026-01-01`), then checks each note's starting level against the close on its trade date. |
 | `fetch-prices` / `price-template` | Get a night's prices on their own (downloaded, or a blank file to type in). |
