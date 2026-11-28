@@ -1,6 +1,10 @@
 -- The nightly job. The app reloads this file at the start of every nightly
 -- run, so it must only define functions (create or replace), never change data
 -- at the top level.
+-- Careful: "create or replace" can't change a function's arguments or what it
+-- returns (run_nightly's output columns, say). An edit like that would fail on
+-- every run until the next full setup, so put a matching
+-- "drop function if exists ..." line just above the changed function.
 -- All the business logic lives in one function so it runs
 -- as a single transaction: it either finishes completely or changes nothing.
 -- Rerunning it for the same date gives the same result.
@@ -8,7 +12,9 @@
 --   select * from run_nightly('2026-11-20');
 
 -- What $1,000 in a note returns at maturity if the underlier finishes at p_level.
--- The payout rules for every note type live here and nowhere else.
+-- The payout rules for every note type. The pricing code keeps a copy
+-- (desk/pricing.py, payout_per_1000) to work on simulated prices; the test
+-- command checks the two agree for every note.
 create or replace function note_payout_per_1000(n notes, p_level numeric)
 returns numeric language sql immutable as $$
     select round(1000 * greatest(0, case n.note_type

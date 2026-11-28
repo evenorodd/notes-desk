@@ -570,7 +570,9 @@ order, so:
   time, in the right order.
 - **A failed night** (a missing price, say) stops the catch-up, raises an
   alert, and is tried again next time; fix its price file in `feeds/` if
-  needed.
+  needed. If one stock's download fails, no price file is written for that day
+  (one without it would fail its night and never be downloaded again); the
+  next catch-up downloads it again.
 
 Today's closes are final from 4:20 pm New York time, so schedule it for 5 pm
 New York time (4 pm Central) or later. Alerts go to the log. To post them to
@@ -653,6 +655,31 @@ CRON_TZ=America/New_York
   system flags coupon checks but doesn't record what was paid.
 - Notes called for a fixed premium are marked called, but the premium isn't
   recorded as a payment.
+
+## Stock splits
+
+Ten of the underliers are single stocks, which can split. The price feed's
+closes are split-adjusted (after a 4-for-1 split, every earlier close is
+divided by 4), but each note's starting level, from its filing, isn't. Left
+alone, the night after a split would load a fake −75% move and could record a
+missed coupon or a barrier breach.
+
+So every download asks the feed for splits too, and records any it reports in
+`feeds/splits.csv`. A night that crosses a split on a stock in the book is
+**refused**, with an alert naming the stock. To handle it:
+
+1. Check the split in the issuer's notice: filings adjust the starting level
+   (and so every barrier and trigger) by the split ratio.
+2. In `real_notes/notes.csv`, divide `initial_level` by the ratio for that
+   stock's notes that traded before the split (4-for-1: divide by 4).
+3. In `feeds/splits.csv`, put `yes` in that split's `handled` column.
+4. Rebuild with every price on the new basis (this replaces the price files
+   with fresh downloads, so redo any hand corrections afterwards):
+   ```bash
+   python3 notes_desk.py setup
+   python3 notes_desk.py fetch-history 2025
+   python3 notes_desk.py backfill 2026-01-01 --force
+   ```
 
 ## Model values (pricing)
 
@@ -737,9 +764,12 @@ python3 notes_desk.py backfill --no-download               # replay the price fi
    match with a close in the 10 days before is listed separately as normal.
    Anything else is flagged: a typo in `real_notes/notes.csv`, or a stock split
    (downloaded history is split-adjusted, filings aren't).
-4. **Summarizes:** notes called or matured during the period, nights with
-   moves over 20%, and any night that failed, with the reason. Fix a failed
-   night's price file and run backfill again; it's safe to repeat.
+4. **Summarizes:** notes called or matured during the period and nights with
+   moves over 20%. It **stops at the first night that fails** (each night
+   applies the checks due since the last good one, so carrying on would take
+   them at the wrong close), and before any day it couldn't get a close for a
+   stock in the book. Fix that night's price file and run backfill again; it's
+   safe to repeat.
 
 A full year (about 230 nights) takes seconds. The website's charts and the AI
 tools' price history then cover the whole period. Docker's first start replays

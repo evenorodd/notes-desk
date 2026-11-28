@@ -20,7 +20,7 @@ from collections import Counter
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
-from . import DeskError, csvfiles, db
+from . import FEEDS_DIR, DeskError, csvfiles, db
 
 # Yahoo's symbol for an underlier, where it differs from our code. Stocks use
 # their own ticker. Add a line here for any new index you add notes on.
@@ -103,14 +103,64 @@ def parse_chart(data, now=None):
     return closes
 
 
-def daily_closes(symbol, start=None, end=None):
-    """{date: close} for the last month of trading days, or for start..end."""
+def parse_splits(data):
+    """{date: ratio} for any stock splits in Yahoo's chart JSON (ratio = new
+    shares per old share: a 4-for-1 split is 4, a 1-for-10 reverse split 0.1)."""
+    try:
+        result = data["chart"]["result"][0]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    tz = ZoneInfo(result.get("meta", {}).get("exchangeTimezoneName") or "America/New_York")
+    out = {}
+    for s in ((result.get("events") or {}).get("splits") or {}).values():
+        try:
+            day = datetime.datetime.fromtimestamp(s["date"], tz).date()
+            out[day] = Decimal(str(s["numerator"])) / Decimal(str(s["denominator"]))
+        except (KeyError, TypeError, ValueError, ArithmeticError):
+            continue
+    return out
+
+
+SPLIT_COLUMNS = ["index_code", "split_date", "ratio", "handled"]
+
+
+def read_splits():
+    """[(code, date, ratio, handled)] from feeds/splits.csv."""
+    import csv
+    path = FEEDS_DIR / "splits.csv"
+    if not path.exists():
+        return []
+    with open(path, newline="", encoding="utf-8") as fh:
+        return [(r["index_code"].strip(), datetime.date.fromisoformat(r["split_date"].strip()),
+                 Decimal(r["ratio"].strip()), r.get("handled", "").strip().lower() == "yes")
+                for r in csv.DictReader(fh) if r.get("index_code", "").strip()]
+
+
+def record_splits(code, splits):
+    """Adds splits the feed reported to feeds/splits.csv (once each)."""
+    if not splits:
+        return
+    known = {(c, d) for c, d, _, _ in read_splits()}
+    new = [(code, d, r) for d, r in sorted(splits.items()) if (code, d) not in known]
+    if not new:
+        return
+    rows = [[c, d, r, "yes" if h else ""] for c, d, r, h in read_splits()]
+    rows += [[c, d, r.normalize(), ""] for c, d, r in new]
+    csvfiles.write_rows(FEEDS_DIR / "splits.csv", SPLIT_COLUMNS, rows)
+
+
+def daily_closes(symbol, start=None, end=None, code=None):
+    """{date: close} for the last month of trading days, or for start..end.
+    Any stock split the feed reports is recorded in feeds/splits.csv (give
+    `code`, the underlier's code here, for that)."""
     url = URL.format(symbol=urllib.parse.quote(symbol))
     if start:
         # Ask for a date range instead of the last month.
         to_epoch = lambda d: int(datetime.datetime.combine(d, datetime.time(), datetime.timezone.utc).timestamp())
         last = (end or datetime.date.today()) + datetime.timedelta(days=1)
         url = url.split("?")[0] + f"?period1={to_epoch(start)}&period2={to_epoch(last)}&interval=1d"
+    if "events=" not in url:
+        url += ("&" if "?" in url else "?") + "events=split"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (notes_desk)"})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
@@ -123,7 +173,10 @@ def daily_closes(symbol, start=None, end=None):
             raise ValueError(f"HTTP {e.code} from the price feed")
     except urllib.error.URLError as e:
         raise ValueError(f"couldn't reach the price feed ({e.reason})")
-    return parse_chart(data)
+    closes = parse_chart(data)
+    if code:
+        record_splits(code, parse_splits(data))
+    return closes
 
 
 def fetch(codes, run_date=None):
@@ -134,7 +187,7 @@ def fetch(codes, run_date=None):
     found, problems = {}, {}
     for code in codes:
         try:
-            found[code] = daily_closes(yahoo_symbol(code))
+            found[code] = daily_closes(yahoo_symbol(code), code=code)
         except ValueError as e:
             problems[code] = str(e)
 

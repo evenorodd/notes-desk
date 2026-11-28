@@ -145,7 +145,7 @@ def fetch_history(year):
     rows, failed = [], []
     for code in codes:
         try:
-            got = daily_closes(yahoo_symbol(code), start, end)
+            got = daily_closes(yahoo_symbol(code), start, end, code=code)
             rows += [[code, d, c] for d, c in sorted(got.items()) if start <= d <= end]
             print(f"  {code:<5} {sum(1 for r in rows if r[0] == code):>4} closes", flush=True)
         except ValueError as e:

@@ -39,10 +39,32 @@ def nightly_problems(conn, prices, run_date):
             out.append(f"line {p['_line']} {p['index_code']}: date {p['price_date']} isn't the run date {run_date}")
 
     codes = [p["index_code"] for p in prices]
-    missing = sorted(needed_codes(conn, run_date) - set(codes))
+    needed = needed_codes(conn, run_date)
+    missing = sorted(needed - set(codes))
     if missing:
         out.append(f"missing a close for: {', '.join(missing)} "
                    "(python3 notes_desk.py price-template lists every underlier)")
+    out += split_problems(conn, run_date, needed)
+    return out
+
+
+def split_problems(conn, run_date, needed):
+    """A stock split since the previous close, on an underlier in the book.
+    The price feed's closes are split-adjusted but the notes' starting levels
+    aren't, so the night would load a fake -50% or -75% move and could record
+    a missed coupon or a barrier breach. Refused until the split is handled
+    (README.md, "Stock splits")."""
+    from .fetch import read_splits
+    out = []
+    for code, day, ratio, handled in read_splits():
+        if handled or code not in needed or day > run_date:
+            continue
+        prev = db.scalar(conn, "select max(price_date) from market_data where index_code = %s and price_date < %s",
+                         (code, run_date))
+        if prev is not None and prev < day:
+            kind = (f"{ratio.normalize()}-for-1" if ratio >= 1 else f"1-for-{(1 / ratio).normalize()} reverse")
+            out.append(f"{code} had a {kind} split on {day} (reported by the price feed, in feeds/splits.csv). "
+                       "The notes' starting levels must be adjusted first: see README.md, \"Stock splits\"")
     return out
 
 

@@ -219,14 +219,24 @@ def catch_up():
 
     log(today, f"catching up: closes from {start} to {today}")
     refresh_treasury_rates(today)
+    incomplete = {}
     try:
-        _download(codes, start, today, force=False)
+        _, incomplete = _download(codes, start, today, force=False)
     except DeskError as e:
         # "No data" for every underlier just means no trading days in the period.
         if not (e.problems and all("no data" in p.lower() for p in e.problems)):
             alert(today, f"catch-up couldn't download closes: {e}" + "".join(f"\n  {p}" for p in e.problems))
             raise
     nights = _nights(start, today)
+    if incomplete:
+        # Stop before the first day missing a close for an underlier in the
+        # book; the next catch-up downloads it again.
+        first = min(incomplete)
+        nights = [d for d in nights if d < first]
+        alert(first, f"no close for {', '.join(incomplete[first])} on {first}; that night and later ones "
+                     "will run once the feed has it (catch-up tries again next time)")
+    if not nights and incomplete:
+        return []
     if not nights:
         log(today, f"no new closes since {last} (a weekend or holiday, or today's close isn't final "
                    "until 4:20 pm New York time)")

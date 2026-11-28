@@ -150,9 +150,6 @@ class Calibration(unittest.TestCase):
         self.assertAlmostEqual(P.realized_vol(gap), P.realized_vol(series), delta=0.02)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class RateFiles(unittest.TestCase):
     """The two rate downloads' formats (samples written like the real files)."""
@@ -188,3 +185,7 @@ class RateFiles(unittest.TestCase):
         self.assertAlmostEqual(c.rate(1), 2 * math.log(1.02))
         self.assertAlmostEqual(c.rate(1.5), (2 * math.log(1.02) + 2 * math.log(1.025)) / 2)
         self.assertAlmostEqual(c.rate(10), 2 * math.log(1.025))
+
+
+if __name__ == "__main__":
+    unittest.main()

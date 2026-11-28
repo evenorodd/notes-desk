@@ -79,9 +79,6 @@ class ParseChart(unittest.TestCase):
         self.assertEqual(yahoo_symbol("BRK.B"), "BRK-B")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class WhyNoCloses(unittest.TestCase):
     """The message when the feed has no close at all for the date asked for."""
@@ -107,3 +104,59 @@ class WhyNoCloses(unittest.TestCase):
 
     def test_weekend(self):
         self.assertIn("weekend", self.why(datetime.date(2026, 11, 21), datetime.datetime(2026, 11, 23, 9)))
+
+
+
+class Splits(unittest.TestCase):
+    """Stock splits reported by the price feed (events=split in Yahoo's chart API)."""
+
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        import desk.fetch as F
+        self.F = F
+        self.dir = tempfile.TemporaryDirectory()
+        self.saved = F.FEEDS_DIR
+        F.FEEDS_DIR = Path(self.dir.name)
+
+    def tearDown(self):
+        self.F.FEEDS_DIR = self.saved
+        self.dir.cleanup()
+
+    def chart(self, splits):
+        return {"chart": {"result": [{"meta": {"exchangeTimezoneName": "America/New_York"},
+                                      "timestamp": [], "indicators": {"quote": [{"close": []}]},
+                                      "events": {"splits": splits}}], "error": None}}
+
+    def test_parse_forward_and_reverse(self):
+        june = int(datetime.datetime(2026, 6, 10, 13, 30, tzinfo=datetime.timezone.utc).timestamp())
+        july = int(datetime.datetime(2026, 7, 1, 13, 30, tzinfo=datetime.timezone.utc).timestamp())
+        got = self.F.parse_splits(self.chart({str(june): {"date": june, "numerator": 4, "denominator": 1},
+                                              str(july): {"date": july, "numerator": 1, "denominator": 10}}))
+        self.assertEqual(got, {datetime.date(2026, 6, 10): Decimal(4), datetime.date(2026, 7, 1): Decimal("0.1")})
+        self.assertEqual(self.F.parse_splits({"chart": {"result": [{}]}}), {})
+
+    def test_recorded_once(self):
+        d = datetime.date(2026, 6, 10)
+        self.F.record_splits("NVDA", {d: Decimal(4)})
+        self.F.record_splits("NVDA", {d: Decimal(4)})
+        self.assertEqual(self.F.read_splits(), [("NVDA", d, Decimal(4), False)])
+
+    def test_night_across_an_unhandled_split_is_refused(self):
+        import desk.prices as P
+        d = datetime.date(2026, 6, 10)
+        self.F.record_splits("NVDA", {d: Decimal(4)})
+        saved = P.db.scalar
+        P.db.scalar = lambda conn, sql, params=None: datetime.date(2026, 6, 9)   # previous close
+        try:
+            got = P.split_problems(None, d, {"NVDA", "SPX"})
+            self.assertEqual(len(got), 1)
+            self.assertIn("NVDA had a 4-for-1 split on 2026-06-10", got[0])
+            self.assertEqual(P.split_problems(None, d, {"SPX"}), [])          # not in the book
+            self.assertEqual(P.split_problems(None, datetime.date(2026, 6, 9), {"NVDA"}), [])   # before it
+        finally:
+            P.db.scalar = saved
+
+
+if __name__ == "__main__":
+    unittest.main()

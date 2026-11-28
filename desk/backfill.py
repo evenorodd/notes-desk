@@ -26,7 +26,7 @@ def _download(codes, start, end, force):
     closes, failed = {}, {}
     for code in codes:
         try:
-            got = daily_closes(yahoo_symbol(code), start, end)
+            got = daily_closes(yahoo_symbol(code), start, end, code=code)
             closes[code] = {d: c for d, c in got.items() if start <= d <= end}
             print(f"  {code:<5} {len(closes[code]):>4} closes", flush=True)
         except ValueError as e:
@@ -36,17 +36,52 @@ def _download(codes, start, end, force):
         raise DeskError("Couldn't download any prices:", [f"{c}: {p}" for c, p in failed.items()])
 
     days = sorted({d for by_day in closes.values() for d in by_day})
-    written = kept = 0
+    needed = _needed_by_day(days)
+    written = kept = filled = 0
+    incomplete = {}                        # day -> underliers in the book with no close
     for d in days:
         path = FEEDS_DIR / f"closes_{d}.csv"
+        have = {c: closes[c][d] for c in closes if d in closes[c]}
         if path.exists() and not force:
-            kept += 1
-            continue
-        rows = [[c, d, closes[c][d]] for c in sorted(closes) if d in closes[c]]
-        csvfiles.write_rows(path, csvfiles.PRICE_COLUMNS, rows)
-        written += 1
-    print(f"{len(days)} trading days: wrote {written} price files, kept {kept} that were already there.")
-    return failed
+            # Keep every close already in the file; only add underliers it lacks
+            # (an earlier download may have failed for one of them).
+            rows = [[r["index_code"], d, r["close"]] for r in csvfiles.read_prices(path)]
+            in_file = {r[0] for r in rows}
+            extra = [[c, d, v] for c, v in sorted(have.items()) if c not in in_file]
+            if extra:
+                csvfiles.write_rows(path, csvfiles.PRICE_COLUMNS, rows + extra)
+                filled += 1
+            else:
+                kept += 1
+            lacking = needed.get(d, set()) - in_file - set(have)
+        else:
+            # A new file only when it has every underlier the book needs that
+            # day: a file missing one would fail its night, and wouldn't be
+            # downloaded again.
+            lacking = needed.get(d, set()) - set(have)
+            if not lacking:
+                csvfiles.write_rows(path, csvfiles.PRICE_COLUMNS,
+                                    [[c, d, v] for c, v in sorted(have.items())])
+                written += 1
+        if lacking:
+            incomplete[d] = sorted(lacking)
+    print(f"{len(days)} trading days: wrote {written} price files, kept {kept} that were already there"
+          + (f", filled in {filled}" if filled else "") + ".")
+    if incomplete:
+        first = min(incomplete)
+        print(f"No complete prices for {len(incomplete)} day(s), from {first} "
+              f"(missing {', '.join(incomplete[first])}); those nights and the ones after can't run yet.")
+    return failed, incomplete
+
+
+def _needed_by_day(days):
+    """For each day, the underliers of notes in the book that day."""
+    from .prices import needed_codes
+    conn = db.connect()
+    try:
+        return {d: needed_codes(conn, d) for d in days}
+    finally:
+        conn.close()
 
 
 def _nights(start, end):
@@ -62,6 +97,9 @@ def _nights(start, end):
 
 
 def _replay(nights):
+    """Runs the nights in order and stops at the first one that fails: each
+    night applies the checks due since the last good one, so carrying on would
+    take a failed night's coupon or call checks at the wrong close."""
     from .nightly import run
     failed = []
     month = None
@@ -77,10 +115,13 @@ def _replay(nights):
                 run(d, fetch=False, replay=last, reports=last, alerts=False, greeks=last)
         except DeskError:
             failed.append(d)
+            print(f"  stopped at {d}, which failed; {len(nights) - i - 1} later night(s) not run.", flush=True)
+            break
         if d.strftime("%Y-%m") != month:
             month = d.strftime("%Y-%m")
             print(f"  {month} ...", flush=True)
-    print(f"Ran {len(nights) - len(failed)} of {len(nights)} nights.")
+    ran = nights.index(failed[0]) if failed else len(nights)
+    print(f"Ran {ran} of {len(nights)} nights.")
     if not failed:
         return []
     conn = db.connect()
@@ -145,12 +186,14 @@ def backfill(start=None, end=None, download=True, force=False):
     finally:
         conn.close()
 
-    failed_downloads = {}
+    failed_downloads, incomplete = {}, {}
     if download:
         print(f"Downloading daily closes for {len(codes)} underliers, {start} to {end} ...", flush=True)
-        failed_downloads = _download(codes, start, end, force)
+        failed_downloads, incomplete = _download(codes, start, end, force)
 
     nights = _nights(start, end)
+    if incomplete:   # run only up to the first day without complete prices
+        nights = [d for d in nights if d < min(incomplete)]
     if not nights:
         raise DeskError(f"No price files in feeds/ between {start or 'the start'} and {end}.")
     print(f"Running {len(nights)} nights in order, {nights[0]} to {nights[-1]} ...", flush=True)
@@ -182,7 +225,11 @@ def backfill(start=None, end=None, download=True, force=False):
     if failed_downloads:
         print("\nCouldn't download: " + "; ".join(f"{c} ({p})" for c, p in failed_downloads.items()))
     if failed_nights:
-        print(f"\n{len(failed_nights)} nights failed; fix their price files and run backfill again:")
+        print("\nStopped at a night that failed. Fix its price file and run backfill again:")
         for d, why in failed_nights:
             print(f"  {d}: {why}")
+    if incomplete:
+        first = min(incomplete)
+        print(f"\nStopped before {first}: no close for {', '.join(incomplete[first])}. Run backfill again "
+              "later, or add the close to its price file by hand.")
     print(f"\nReports for {nights[-1]} are in reports/. The website and the AI tools show the full history.")
