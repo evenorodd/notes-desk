@@ -582,11 +582,10 @@ Slack too, set `NOTES_DESK_SLACK_WEBHOOK` to a Slack incoming-webhook URL.
 
 `docker/systemd/` has a timer that runs `catch-up` inside Docker at 5 pm New
 York time every weekday, whatever your computer's time zone. If the computer
-was off then, it runs as soon as it's back. After a successful run it commits
-and pushes any new price files in `feeds/` to GitHub (only those: nothing else
-in the folder is ever committed), so other copies get them with `git pull`.
-Then a desktop notification says how it went: which nights ran, any price to
-double-check, whether the push worked, or why the run failed.
+was off then, it runs as soon as it's back. Then a desktop notification says
+how it went: which nights ran, any price to double-check, or why the run
+failed. If you own the GitHub repo, it can also commit and push each night's
+new price files (see below).
 
 The timer runs `docker/systemd/nightly.sh`. Set it up once (in the project
 folder; it assumes the project is in `~/Downloads/notes_desk`, so change that
@@ -609,14 +608,20 @@ sudo systemctl enable --now docker    # start Docker when the computer starts
 | Turn it off | `systemctl --user disable --now notes-desk-nightly.timer` |
 | Push price files by hand | `sh docker/systemd/push-prices.sh` |
 
-To keep the price files local instead, remove the `#` in front of
-`Environment=NOTES_DESK_PUSH=0` in
-`~/.config/systemd/user/notes-desk-nightly.service`, then
-`systemctl --user daemon-reload`. Notifications only show while you're logged
-in; a run while you're logged out still happens, just silently. The push needs Git to sign in to GitHub
-without asking, e.g. through GitHub's `gh` tool (`gh auth setup-git`). If a
-push fails (no internet, or GitHub has changes you don't have), the commit is
-kept and goes up with the next push; the log says what happened.
+Notifications only show while you're logged in; a run while you're logged out
+still happens, just silently.
+
+**Pushing to GitHub (the repo's owner only).** It's off by default, since a
+copy of someone else's repo can't push to it. To switch it on, remove the `#`
+in front of `Environment=NOTES_DESK_PUSH=1` in
+`~/.config/systemd/user/notes-desk-nightly.service`, then run
+`systemctl --user daemon-reload`. After each successful run it then commits the
+new price files in `feeds/` (only those: nothing else in the folder is ever
+committed) and pushes them, so other copies get them with `git pull`, and the
+notification says whether the push worked. Git must be able to sign in to
+GitHub without asking, e.g. through GitHub's `gh` tool (`gh auth setup-git`).
+If a push fails (no internet, or GitHub has changes you don't have), the
+commit is kept and goes up with the next push.
 
 After you copy updated code into the project folder, rebuild with
 `docker compose up --build -d`; the timer uses whatever is running.
@@ -703,6 +708,100 @@ at the bank's borrowing rate: the Treasury rate plus a spread.
   on the model answers: what would the issuer's own method say today?
 - It also gives how the value moves per 1% move in the underlier (delta) and
   per volatility point (vega).
+
+### The formula, for notes paid only at maturity
+
+Only the final price matters, so the value is each possible payout times its
+probability, added up, then discounted:
+
+```
+value          = discount × average payout
+average payout = Σ  payout if the underlier ends at X  ×  probability it ends at X
+discount       = e^−(Treasury rate + spread) × years
+```
+
+The probabilities come from the standard assumption that the underlier's
+percentage moves follow a bell curve: centred on today's level grown at the
+Treasury rate less dividends, with a width of volatility × √years. The app adds
+the sum up exactly, over the whole curve (`expected_final` in `desk/pricing.py`).
+
+**Example:** a buffered note, start 100, 15% buffer, gains capped at +20%, 2
+years, on an index with 15% volatility and 1.2% dividends; Treasury rate 3.7%,
+spread 0.5%.
+
+| Index ends between | Probability | Average payout there | Contributes |
+|---|---|---|---|
+| 0–70 | 3.5% | $795.37 | $27.89 |
+| 70–85 (loss past the buffer) | 15.0% | $937.29 | $140.71 |
+| 85–100 (buffer protects) | 26.3% | $1,000.00 | $263.24 |
+| 100–120 (the gain) | 31.9% | $1,092.74 | $348.40 |
+| over 120 (capped) | 23.3% | $1,200.00 | $279.29 |
+| **Average payout in 2 years** | | | **$1,059.53** |
+
+Discount: e^−(3.7% + 0.5%) × 2 = 0.9194, so the value is $1,059.53 × 0.9194 =
+**$974.16**. At 30% volatility it would be $916.76: a jumpier index makes a fall
+through the buffer more likely, and the cap stops it benefiting from big rises.
+
+The same answer comes from options: the note is a bond plus a call at 100,
+minus a call at 120 (the cap), minus a put at 85 (the loss past the buffer),
+each priced with Black–Scholes. The tests check the two methods agree.
+
+### Simulation, for notes with coupons or calls
+
+When coupons or calls are involved, the path matters, not just where it ends,
+so the app simulates it (`simulate_cashflows` in `desk/pricing.py`):
+
+1. **Make 20,000 paths.** Each is the underlier's level on every remaining check
+   date, stepping from one date to the next with a random move drawn from the
+   same bell curve. Half the paths are mirror images of the other half, which
+   cuts the noise, and the random numbers are fixed, so the same inputs always
+   give the same value.
+2. **Apply the note's rules on each check date, in order:**
+   - coupon date: pay the coupon if the level is at or above the coupon barrier
+     (plus any missed coupons, for a memory coupon); otherwise count it missed;
+   - call date: if the level is at or above the call trigger, pay $1,000 (plus
+     the call premium, for a callable buffered note) and end the path;
+   - final date: pay what the maturity rules give for that level.
+3. **Discount each payment** from its date at the Treasury rate plus the spread,
+   add up each path, and **average the 20,000 paths**.
+4. **The ± figure** is the simulation's standard error: how far the average
+   could be from the exact answer. About $1–2 per $1,000 with 20,000 paths.
+
+**Example:** an income note, start 100, coupons of 12% a year paid quarterly
+($30) at or above 70%, with memory; callable quarterly from month 6 at 100%; 60%
+barrier at maturity; 2 years, on a stock with 40% volatility.
+
+| Path | Levels on the check dates | What happens | Worth today |
+|---|---|---|---|
+| A | 136, 170 | $30 coupon, then called at month 6 ($1,030) | $1,038.45 |
+| B | 60, 70, 95, 88, 87, 140 | Misses the first coupon; at 70 pays $60 (memory); called at month 18 | $1,112.23 |
+| C | 101, 74, 80, 60, 82, 60, 64, 62 | Some coupons missed; never called; ends at 62, above the barrier: $1,000 back | $1,064.39 |
+| D | 77, 75, 65, 53 … 41 | Two coupons, then none; ends at 41, below the barrier: $411.50 | $437.34 |
+
+| Across all 20,000 paths | Share | Average worth today |
+|---|---|---|
+| Called early | 69.8% | $1,051.67 |
+| Reaches maturity, $1,000 back | 13.8% | $1,117.97 |
+| Reaches maturity below the barrier | 16.5% | $484.18 |
+| **Model value** | | **$967.24 (± $1.59)** |
+
+Volatility matters a lot here: the same note is worth $1,040.57 at 25%
+volatility and $899.19 at 55%.
+
+### The spread
+
+Each filing states the issuer's estimated value on the trade date, below $1,000
+because it includes the bank's fees and costs. The spread is solved so the
+model gives exactly that value that day, then kept for the note's life
+(`solve_spread`). For a note paid only at maturity, there's a formula:
+
+```
+spread = ln(average payout × e^−(Treasury rate × years) / estimated value) / years
+```
+
+For simulated notes the app finds it by trial (bisection) on the same 20,000
+paths. If no spread between −10% and +50% matches, the volatility is far from
+what the issuer used, and the note borrows its issuer's average spread instead.
 
 **Inputs**, all plain files:
 

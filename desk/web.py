@@ -214,7 +214,8 @@ button { font: inherit; background: var(--accent); color: #fff; border: 0; borde
 button:hover { filter: brightness(1.08); }
 label.check { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
 dl.terms { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; }
-dl.terms dt { color: var(--muted); } dl.terms dd { margin: 0; font-variant-numeric: tabular-nums; }
+dl.formula { background: var(--panel2, rgba(127,127,127,.08)); padding: 10px 12px; border-radius: 6px; white-space: pre; overflow-x: auto; font-size: 13px; }
+.terms dt { color: var(--muted); } dl.terms dd { margin: 0; font-variant-numeric: tabular-nums; }
 .plain { background: var(--accent-soft); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
 .plain p { margin: 0 0 6px; } .plain p:last-child { margin: 0; }
 pre.log { background: var(--neutral-soft); border-radius: 8px; padding: 12px; overflow-x: auto;
@@ -880,7 +881,33 @@ thousands of price paths and applying the note's rules on each check date.</p>
 issuer published in its filing. From then on the model answers: what would the issuer's own method say today?</p>
 <p><b>Limits:</b> volatility is measured from the past year's prices, one number per underlier, where an issuer
 uses option-market (implied) volatility that varies by level and maturity. Dividend yields are approximate.
-The value is not a price a dealer would pay: bids are usually lower.</p></div></div>"""
+The value is not a price a dealer would pay: bids are usually lower.</p></div></div>
+<div class="row"><div class="grow"><div class="panel"><h2>Notes paid only at maturity: the formula</h2><div class="plain">
+<pre class="mono formula">value          = discount × average payout
+average payout = Σ payout if it ends at X × probability it ends at X
+discount       = e^−(Treasury rate + spread) × years</pre>
+<p>The probabilities form a bell curve of percentage moves, centred on today's level grown at the Treasury rate
+less dividends, as wide as volatility × √years. Example: a 2-year note with a 15% buffer and gains capped at
++20%, on an index with 15% volatility:</p>
+<table><thead><tr><th>Index ends</th><th class="n">Probability</th><th class="n">Average payout</th></tr></thead><tbody>
+<tr><td>below 85 (loss past the buffer)</td><td class="n">18.5%</td><td class="n">$911</td></tr>
+<tr><td>85 to 100 (buffer protects)</td><td class="n">26.3%</td><td class="n">$1,000</td></tr>
+<tr><td>100 to 120 (the gain)</td><td class="n">31.9%</td><td class="n">$1,093</td></tr>
+<tr><td>above 120 (capped)</td><td class="n">23.3%</td><td class="n">$1,200</td></tr></tbody></table>
+<p>Average payout $1,059.53 × discount 0.9194 (3.7% + 0.5% for 2 years) = <b>$974.16</b>. The same as a bond plus
+a call at 100, less a call at 120 and a put at 85, priced with Black–Scholes.</p></div></div></div>
+<div class="grow"><div class="panel"><h2>Notes with coupons or calls: simulation</h2><div class="plain">
+<ol><li><b>Make 20,000 paths</b> of the underlier's level on each check date, each step a random draw from the
+same bell curve.</li>
+<li><b>Apply the note's rules on each date:</b> pay the coupon if at or above the coupon barrier (with any missed
+ones, for memory coupons); if at or above the call trigger on a call date, pay $1,000 and stop; at maturity, pay
+what the rules give.</li>
+<li><b>Discount</b> each payment at the Treasury rate plus the spread, and <b>average</b> the paths.</li></ol>
+<p>Example, a 2-year income note on a stock with 40% volatility: 69.8% of paths are called early (worth
+$1,052 on average), 13.8% reach maturity and repay $1,000 ($1,118 with coupons), and 16.5% end below the
+barrier ($484). Average: <b>$967.24, ± $1.59</b>, the simulation's margin of error.</p>
+<p><b>The spread</b> is solved once per note so the model equals the issuer's estimated value on the trade
+date. README.md, "Model values", has the full working.</p></div></div></div></div>"""
     if not has_pricing(conn) or d is None:
         return page("Pricing", intro + '<div class="panel"><p class="empty">No model values yet. Run '
                     '<span class="mono">python3 notes_desk.py pricing-setup</span> once.</p></div>', "pricing")

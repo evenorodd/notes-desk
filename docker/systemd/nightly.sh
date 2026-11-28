@@ -1,7 +1,8 @@
 #!/bin/sh
 # The nightly run on Linux, started by notes-desk-nightly.service (safe to run
 # by hand too): start the app if needed, run every night missed since the last
-# successful run, push any new price files to GitHub, then show a desktop
+# successful run, push any new price files to GitHub if NOTES_DESK_PUSH=1 (off
+# unless switched on: only the repo's owner can push), then show a desktop
 # notification saying how it went.
 set -u
 cd "$(dirname "$0")/../.." || exit 1
@@ -32,7 +33,7 @@ if [ "$rc" -ne 0 ]; then
     exit 1
 fi
 
-if [ "${NOTES_DESK_PUSH:-1}" = 0 ]; then
+if [ "${NOTES_DESK_PUSH:-0}" != 1 ]; then
     push="Price files kept here (not pushed)."
     prc=0
 else

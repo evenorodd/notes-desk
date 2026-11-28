@@ -8,8 +8,10 @@ Description=Notes desk nightly run (fetch closes, value the notes, write the rep
 Type=oneshot
 # The project folder; change this if yours is somewhere else.
 WorkingDirectory=%h/Downloads/notes_desk
-# Start the app if needed, run every missed night, push new price files in
-# feeds/ (only those) to GitHub, and show a desktop notification with the result.
+# Start the app if needed, run every missed night, and show a desktop
+# notification with the result.
 ExecStart=/bin/sh %h/Downloads/notes_desk/docker/systemd/nightly.sh
-# To keep new price files on this computer instead of pushing them, remove the #:
-#Environment=NOTES_DESK_PUSH=0
+# If this is your repo and you want each night's new price files in feeds/
+# (only those) committed and pushed to GitHub, remove the # below. Leave it as
+# it is on a copy you can't push to.
+#Environment=NOTES_DESK_PUSH=1
