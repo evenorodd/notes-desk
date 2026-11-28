@@ -15,6 +15,7 @@ code from GitHub on Windows, Mac and Linux.
   feeds/closes_DATE.csv ◄── fetch-prices (Yahoo)   │
           │                                        ▼
           └──────────────────► nightly ──► values every note ──► reports/morning_DATE.txt
+  feeds/rates_YEAR.csv ─────────────────► model value of every note (pricing)
                                                                  reports/notes_DATE.csv
                                                    │
                                                    ├──► serve ──► the same results in your browser
@@ -46,6 +47,8 @@ code from GitHub on Windows, Mac and Linux.
 | `backfill START` | Downloads history and replays every night since START (e.g. `2026-01-01`), then checks each note's starting level against the close on its trade date. |
 | `fetch-prices` / `price-template` | Get a night's prices on their own (downloaded, or a blank file to type in). |
 | `add-notes FILE` | When new notes are bought. |
+| `pricing-setup` | Once: downloads a year of earlier prices and the Treasury rates, then values every note on every night. After that, each nightly run prices itself. |
+| `price DATE` / `price --all` | Reprices one night or all of them (normally done by nightly). |
 | `serve` | Opens the notes desk in your web browser at http://localhost:8000: dashboard, every note, one page per note, run history. |
 | `mcp` | Lets an AI assistant (Claude Desktop, Claude Code) answer questions about the book, read-only. Add `--allow-runs` to let it run the nightly job too. Started by the assistant, not by you. |
 | `export` | Saves the website for one night as plain HTML files in `export/`, to share. |
@@ -54,7 +57,7 @@ code from GitHub on Windows, Mac and Linux.
 Run `python3 notes_desk.py COMMAND -h` to see a command's options (for example,
 `nightly -h` shows `--fetch`).
 
-## The 13 tables, in four groups
+## The tables, in five groups
 
 **1. Reference: who and what (rarely changes)**
 - `indices`: the 15 underliers (SPX, NDX, AAPL…)
@@ -76,8 +79,50 @@ Run `python3 notes_desk.py COMMAND -h` to see a command's options (for example,
 - `concentration_breaches`: an advisor with too much money linked to one underlier
 - `job_runs`: one row per run, saying whether it succeeded, failed or warned, and why
 
+**5. Pricing (written after the nightly job; see README.md, "Model values")**
+- `treasury_rates`: Treasury yields by maturity, each day
+- `note_calibrations`: each note's spread over Treasuries, solved on its trade date to match the issuer's estimated value
+- `note_valuations`: each note's model value each night, with how it moves per 1% and per volatility point
+- `pricing_input_files`: which rate and history files have been loaded
+
 The first two groups describe what you own. The third is what the market did.
-The fourth is what the job concluded.
+The fourth is what the job concluded, and the fifth what the notes are worth.
+
+## How the notes are priced
+
+Each night, every note gets a **model value**: what $1,000 of it is worth
+today, before maturity. A note is a loan to the issuing bank with options built
+into its payout, so its value is:
+
+> **the average of what it might pay, across all the ways the underlier could
+> move, discounted back to today at the Treasury rate plus a spread for the
+> bank's risk**
+
+1. **Imagine the possible futures.** How widely the underlier could move
+   depends on its volatility, measured from the past year of its prices.
+2. **Apply the note's own rules** to each future: coupons, calls, buffer,
+   barrier, cap.
+3. **Average, then discount.** A dollar later is worth less than a dollar now.
+4. **Match the bank's own number.** Each filing states the bank's estimated
+   value on the trade date (e.g. $966.85 per $1,000). The spread is set so the
+   model agrees with it that day, then kept, so the model moves each night the
+   way the bank's own method would.
+
+| Note type | Notes | Method | More volatility... |
+|---|---|---|---|
+| Buffered | 48 | Exact formula: only the final price matters, so it's payout × probability, summed over every final price (the same answer as a bond plus calls and puts priced with Black–Scholes) | lowers the value |
+| Principal-protected | 10 | Exact formula: a bond plus a call | raises the value |
+| Income (coupons, calls) | 15 | Simulation: 20,000 possible paths, the rules applied on every check date, then averaged | lowers it, strongly |
+| Buffered with a call | 2 | Simulation, as above | lowers the value |
+
+Each note also gets how its value moves per 1% move in the underlier and per
+volatility point. The website's **Pricing** page shows every input.
+
+**Limits:** volatility comes from past prices, where banks use option-market
+(implied) volatility; where the two differ, the calibrated spread looks odd
+and the Pricing page marks it **check**. Dividend yields are approximate. A
+model value isn't a price a dealer would pay. README.md, "Model values",
+has the details.
 
 ## The website (`serve`)
 
@@ -94,6 +139,9 @@ open it. Leave the terminal window open while you use it; Ctrl+C stops it.
   underlier against the note's start, barrier or buffer and call levels, a
   payout calculator (drag to see what $1,000 pays at any move), the schedule,
   and the note's history night by night.
+- **Pricing:** how model values are worked out, and every input: volatility
+  and dividends per underlier, the Treasury curve, and each note's calibrated
+  spread and value.
 - **Runs:** every nightly run and whether it worked, the price files loaded,
   and a button that runs the nightly job (with the price download if needed).
 

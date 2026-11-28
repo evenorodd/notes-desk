@@ -104,6 +104,12 @@ def book_summary(conn, date=None):
         order by count(*) desc, 1""", (d,))
     run = _records(conn, """select status, message from job_runs where run_date = %s
                             order by run_id desc limit 1""", (d,))
+    model = None
+    if db.scalar(conn, "select to_regclass('note_valuations') is not null"):
+        mv = db.rows(conn, """select sum(v.model_value * h.notional / 1000), count(distinct v.note_id)
+                              from note_valuations v join holdings h using (note_id) where v.run_date = %s""", (d,))[0]
+        if mv[0] is not None:
+            model = {"total": round(float(mv[0]), 2), "notes_priced": mv[1]}
     return {
         "night": d.isoformat(),
         "latest_run": run[0] if run else None,
@@ -112,9 +118,11 @@ def book_summary(conn, date=None):
         "below_protection": {"notes": k[2], "notional": _plain(k[3])},
         "within_10pct_of_protection": k[4],
         "value_if_all_matured_today": round(float(k[5] or 0), 2),
+        "model_value": model,
         "by_type": by_type,
         "by_underlier": underliers,
-        "note": "value_if_all_matured_today excludes coupons already paid.",
+        "note": "value_if_all_matured_today excludes coupons already paid. model_value is the model's value "
+                "today (calibrated to each issuer's estimated value at issue; not a dealer bid).",
     }
 
 
@@ -185,8 +193,23 @@ def get_note(conn, cusip, date=None):
     holdings = _records(conn, """select a.household, v.name as advisor, h.notional
                                  from holdings h join accounts a using (account_id) join advisors v using (advisor_id)
                                  where h.note_id = %s order by h.notional desc""", (note_id,))
+    model = None
+    if db.scalar(conn, "select to_regclass('note_valuations') is not null"):
+        m = _records(conn, """
+            select v.model_value as model_value_per_1000, v.std_error as simulation_error_per_1000,
+                   v.delta_1pct as change_per_1pct_move_per_1000, v.vega_1pt as change_per_vol_point_per_1000,
+                   round(v.vol * 100, 1) as volatility_pct, round(v.div_yield * 100, 2) as dividend_yield_pct,
+                   round(v.rate * 100, 3) as treasury_rate_pct, round(v.spread * 10000) as issuer_spread_bp,
+                   v.method, c.estimated_value as issuer_estimated_value_at_issue, c.source as spread_source
+            from note_valuations v left join note_calibrations c using (note_id)
+            where v.note_id = %s and v.run_date = %s""", (note_id, d))
+        if m:
+            model = {k: v for k, v in m[0].items() if v is not None}
+            model["what_it_is"] = ("Model value: expected payout under standard option-pricing assumptions, "
+                                   "discounted at the issuer's rate, with the spread calibrated to the issuer's "
+                                   "estimated value on the trade date. Not a dealer bid.")
     return {"night": d.isoformat(), "terms": terms,
-            "status": status[0] if status else None,
+            "status": status[0] if status else None, "model_value": model,
             "next_checks": upcoming, "flags": events, "holdings": holdings}
 
 
@@ -319,7 +342,8 @@ TOOLS = [
     {
         "name": "get_note",
         "description": "Everything about one note: its terms from the SEC filing (with the filing link), its "
-                       "status that night, its next coupon/call/maturity checks, any flags, and who holds it.",
+                       "status that night, its model value today (with how it moves per 1% and per volatility "
+                       "point, and the inputs), its next coupon/call/maturity checks, any flags, and who holds it.",
         "input_schema": {"type": "object", "properties": {"cusip": CUSIP, "date": DATE},
                          "required": ["cusip"], "additionalProperties": False},
         "handler": get_note,

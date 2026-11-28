@@ -72,7 +72,9 @@ def _replay(nights):
             with contextlib.redirect_stdout(out):
                 # Running in date order already decides every later night, so no
                 # replaying; the last night also replays anything stored after it.
-                run(d, fetch=False, replay=last, reports=last, alerts=False)
+                # Sensitivities (delta, vega) only for the last night: the rest
+                # get model values, which is what the history charts need.
+                run(d, fetch=False, replay=last, reports=last, alerts=False, greeks=last)
         except DeskError:
             failed.append(d)
         if d.strftime("%Y-%m") != month:

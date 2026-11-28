@@ -208,6 +208,9 @@ The database does the financial work; Python handles files, scheduling and repor
 | `desk/nightly.py` | `nightly`, `catch-up` and `price-template`: locking, job log, alerts |
 | `desk/folder_owner.py` | In Docker, writes files as the project folder's owner rather than root |
 | `desk/fetch.py` | `fetch-prices`: gets closes from Yahoo Finance's daily price feed |
+| `desk/pricing.py` | The pricing maths: payout rules, exact integration, Monte Carlo, calibration |
+| `desk/valuation.py` | `price` and `pricing-setup`: gathers the inputs, calibrates each note, stores the values |
+| `desk/rates.py` | `fetch-rates` and `fetch-history`: Treasury yields and a year of earlier closes |
 | `desk/web.py` | `serve`: the local website (dashboard, notes, one page per note, runs) |
 | `desk/report.py` | The morning report and the every-note CSV |
 | `desk/whatif.py` | `what-if` and `test` |
@@ -216,6 +219,7 @@ The database does the financial work; Python handles files, scheduling and repor
 | `sql/02_reference_data.sql` | The example advisor the household belongs to |
 | `sql/03_nightly_job.sql` | `note_payout_per_1000()`: payout rules for every note type. `run_nightly(date)`: the nightly job |
 | `sql/04_load_real_notes.sql` | Checks and loads notes (used by `setup` and `add-notes`) |
+| `sql/05_pricing.sql` | The pricing tables: Treasury rates, each note's calibration, nightly model values |
 | `real_notes/` | The notes, their check dates, and a template for new notes |
 | `tests/` | Unit tests (`test_*.py`) and database tests (`test_nightly.sql`) |
 
@@ -237,7 +241,10 @@ Run these one line at a time.
 - **Windows:** install WSL (`wsl --install` in PowerShell), open Ubuntu, then follow the Ubuntu steps
 
 Python 3.9 or newer is needed (Fedora 43 has it). The app works with either
-psycopg 3 or psycopg2; it uses whichever is installed.
+psycopg 3 or psycopg2; it uses whichever is installed. Model values (pricing)
+also need numpy: `sudo dnf install python3-numpy` on Fedora,
+`sudo apt install python3-numpy` on Ubuntu, `python3 -m pip install numpy` on a
+Mac. Without it, everything else works and pricing is skipped. (Docker includes it.)
 
 ### 2. Give your own account access to PostgreSQL
 
@@ -413,6 +420,7 @@ Percentages are decimals: `0.2019` means 20.19%.
 | `coupon_cushion` | Income notes only: how far above the coupon barrier. Negative on a coupon date means no coupon |
 | `vs_call_trigger` | Callable notes only: distance to the autocall level. Zero or positive means it would be called on a call date. Blank if the note can't be called |
 | `payout_per_1000` | What each $1,000 would pay if that night were the final valuation date: principal plus any upside, not counting coupons |
+| `model_value` | What each $1,000 is worth that night under the pricing model (see "Model values"). Blank if the note wasn't priced |
 | `next_check` | The next coupon, call or final valuation date |
 | `source_url` | The SEC filing the terms came from |
 
@@ -543,9 +551,12 @@ Neither changes your data: each runs inside a transaction that is undone at the 
   $32 and $29.
 
 `test` runs the unit tests in `tests/test_*.py` (schedules built from real
-filings, CSV checks; no database needed) and the database tests in
-`tests/test_nightly.sql` (payouts against the filings, calls, reruns, missing
-prices). The unit tests also run on their own with `python3 -m unittest`.
+filings, CSV checks, the pricing maths against Black–Scholes; no database
+needed) and the database tests in `tests/test_nightly.sql` (payouts against the
+filings, calls, reruns, missing prices). Last, it checks that the pricing
+code's copy of the payout rules matches the database's for every note, at
+levels from 20% to 220% of the start and either side of every barrier, buffer
+and cap. The unit tests also run on their own with `python3 -m unittest`.
 
 ## Scheduling
 
@@ -642,6 +653,68 @@ CRON_TZ=America/New_York
   system flags coupon checks but doesn't record what was paid.
 - Notes called for a fixed premium are marked called, but the premium isn't
   recorded as a payment.
+
+## Model values (pricing)
+
+Every night, after the job, each note in the book gets a **model value** per
+$1,000: what it's worth today, before maturity. It shows on each note's page
+(with a chart since the trade date), on the dashboard, on the **Pricing** page,
+in the `model_value` column of the notes CSV, and in Claude's tools.
+
+**How it works.** A structured note is a bond from the issuing bank with
+options built into its payout. The model value is the expected payout under
+standard option-pricing assumptions (the underlier moves randomly with a
+constant volatility, drifting at the Treasury rate less dividends), discounted
+at the bank's borrowing rate: the Treasury rate plus a spread.
+
+- Notes paid only at maturity (buffered, protected) are valued exactly.
+- Notes with coupons or calls (income notes, callable buffered notes) are valued
+  by Monte Carlo: 20,000 simulated paths, checked on each coupon and call date.
+- Each note's **spread** is solved once, on its trade date, so the model matches
+  the **estimated value** the issuer published in its filing
+  (`real_notes/estimated_values.csv`, with each filing's own words). From then
+  on the model answers: what would the issuer's own method say today?
+- It also gives how the value moves per 1% move in the underlier (delta) and
+  per volatility point (vega).
+
+**Inputs**, all plain files:
+
+| File | What | Where from |
+|---|---|---|
+| `feeds/rates_YEAR.csv` | Treasury par yields, every maturity, every day | US Treasury (FRED as a fallback): `fetch-rates` |
+| `feeds/history_YEAR.csv` | A year of closes before the book starts, for volatility on early trade dates | Yahoo: `fetch-history` |
+| `real_notes/dividend_yields.csv` | Expected dividend yield per underlier | Approximate; edit as needed |
+| `real_notes/estimated_values.csv` | The issuer's estimated value on each trade date | Each note's 424B2 filing |
+
+**First time** (once; it downloads the history and rates, then prices every
+night that has run):
+
+```bash
+python3 notes_desk.py pricing-setup
+```
+
+With Docker: `docker compose exec app python3 notes_desk.py pricing-setup`.
+Then commit the new files in `feeds/` so other copies get them too. After that,
+`nightly`, `catch-up` and `backfill` price each night themselves, and update the
+current year's rates. To reprice by hand: `python3 notes_desk.py price` (the
+latest night) or `price --all`.
+
+**Limits, worth knowing:**
+
+- Volatility is measured from the past year's prices: one number per underlier.
+  An issuer uses option-market (implied) volatility, which varies by level and
+  maturity. Income notes are very sensitive to it, so where the two differ, the
+  calibrated spread absorbs the gap; the Pricing page marks spreads below −0.5%
+  or above 3% with **check**. Implied volatility is the natural next step.
+- Dividend yields are approximate.
+- Smaller simplifications: coupons are discounted from their check date (the
+  payment comes a few days later), Treasury par yields are used as zero rates,
+  and each note's spread stays as it was on the trade date.
+- 46661PYC5's estimated value is the midpoint of the range in its preliminary
+  filing ($976.30 to $986.30); the final filing would have the exact figure.
+- A model value is not a price anyone will pay: a dealer's bid is usually lower.
+- One note, 06749LZG4, has no estimated value: its `source_url` points to a
+  filing for a different CUSIP. It uses Barclays' average spread until fixed.
 
 ## Filling in history (`backfill`)
 

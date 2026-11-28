@@ -43,7 +43,7 @@ def price_file(run_date):
     return FEEDS_DIR / f"closes_{run_date}.csv"
 
 
-def run(run_date, fetch=False, replay=True, reports=True, alerts=True):
+def run(run_date, fetch=False, replay=True, reports=True, alerts=True, price=True, greeks=True):
     """One night. The options are for backfill, which replays many nights in
     date order: no replaying of later nights (it runs them itself), reports for
     the last night only, and no alert per night (it reports at the end)."""
@@ -127,6 +127,9 @@ def run(run_date, fetch=False, replay=True, reports=True, alerts=True):
         conn.commit()
         print(table(headers, steps))
 
+        if price:
+            price_nights(run_date, [run_date] + later, refresh_rates=fetch, greeks=greeks)
+
         morning = notes = None
         if reports:
             morning, notes = report.write_reports(conn, run_date)
@@ -151,6 +154,30 @@ def run(run_date, fetch=False, replay=True, reports=True, alerts=True):
     finally:
         conn.close()
         lock.close()
+
+
+def price_nights(run_date, nights, refresh_rates=False, greeks=True):
+    """Model values for the night (and any replayed later nights). Pricing
+    never fails a night: a problem is logged and the rest goes on."""
+    from . import valuation
+    if refresh_rates:
+        refresh_treasury_rates(run_date)
+    try:
+        summary, problems = valuation.price(nights, greeks=greeks)
+    except Exception as e:            # noqa: BLE001 - a pricing bug mustn't stop the reports
+        log(run_date, f"pricing failed, so no model values tonight: {e}")
+        return
+    if problems:
+        summary += f"; {len(problems)} not priced: " + "; ".join(problems[:3]) + (" ..." if len(problems) > 3 else "")
+    log(run_date, summary)
+
+
+def refresh_treasury_rates(run_date):
+    from .rates import fetch_rates
+    try:
+        fetch_rates([run_date.year], quiet=True)
+    except DeskError as e:
+        log(run_date, f"couldn't update Treasury rates ({e}); pricing uses the latest ones on file")
 
 
 def price_template(run_date, force=False):
@@ -191,6 +218,7 @@ def catch_up():
         return []
 
     log(today, f"catching up: closes from {start} to {today}")
+    refresh_treasury_rates(today)
     try:
         _download(codes, start, today, force=False)
     except DeskError as e:

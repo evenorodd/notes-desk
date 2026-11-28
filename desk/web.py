@@ -53,6 +53,11 @@ TYPE_LABELS = {"income": "Income", "buffered": "Buffered", "trigger_growth": "Tr
 LONG_DATE, SHORT_DATE, DAY_DATE, FULL_DATE = "%B %-d, %Y", "%b %-d, %Y", "%a %b %-d, %Y", "%A, %B %-d, %Y"
 
 
+def has_pricing(conn):
+    """True once the pricing tables exist (pricing-setup, or any priced night)."""
+    return bool(db.scalar(conn, "select to_regclass('note_valuations') is not null"))
+
+
 def dfmt(d, fmt):
     return d.strftime(fmt.replace("%-d", str(d.day)))
 
@@ -70,7 +75,9 @@ def pct(v, signed=False, places=1):
 def money(v, cents=False):
     if v is None:
         return "—"
-    return f"${float(v):,.2f}" if cents else f"${float(v):,.0f}"
+    x = float(v)
+    text = f"${abs(x):,.2f}" if cents else f"${abs(x):,.0f}"
+    return ("−" + text) if x < 0 and text.strip("$0.,") else text
 
 
 def num(v, places=2):
@@ -262,7 +269,8 @@ document.querySelectorAll('table.sortable').forEach(function (t) {
 
 
 def page(title, body, active="", script="", wide=False):
-    links = [("/", "Dashboard", "dash"), ("/notes", "Notes", "notes"), ("/runs", "Runs", "runs")]
+    links = [("/", "Dashboard", "dash"), ("/notes", "Notes", "notes"), ("/pricing", "Pricing", "pricing"),
+             ("/runs", "Runs", "runs")]
     nav = "".join(f'<a href="{h}" class="{"on" if k == active else ""}">{t}</a>' for h, t, k in links)
     snap = (f'<div class="snap"><div class="wrap">Read-only snapshot of the notes desk app, from the nightly run '
             f'for {dfmt(STATIC["date"], LONG_DATE)}. Click any CUSIP for its page.</div></div>') if STATIC["on"] else ""
@@ -354,11 +362,20 @@ def dashboard(conn, query):
                                  count(*) filter (where flag in ('coupon_at_risk', 'coupon_missed_if_today')),
                                  count(*) filter (where flag not in ('below_protection'))
                           from events where run_date = %s""", (d,))[0]
+    model_tile = ""
+    if has_pricing(conn):
+        mv = db.rows(conn, """select sum(v.model_value * h.notional / 1000), sum(h.notional), count(distinct v.note_id)
+                              from note_valuations v join holdings h using (note_id) where v.run_date = %s""", (d,))[0]
+        if mv[0] is not None:
+            model_tile = (f'<div class="tile"><div class="k">Model value of the book</div><div class="v">{money(mv[0])}</div>'
+                          f'<div class="s">{pct(mv[0] / mv[1] - 1, True)} vs notional ({mv[2]} notes); '
+                          f'<a href="/pricing?date={d}">how it\'s priced</a></div></div>')
     out.append(f"""<div class="tiles">
 <div class="tile"><div class="k">Notes valued</div><div class="v">{k[0]}</div><div class="s">{money(k[1])} notional</div></div>
 <div class="tile {'bad' if k[2] else 'good'}"><div class="k">Below protection</div><div class="v">{k[2]}</div><div class="s">{money(k[3])} notional</div></div>
 <div class="tile {'warn' if k[4] else ''}"><div class="k">Within 10% of protection</div><div class="v">{k[4]}</div><div class="s">could slip below on a bad day</div></div>
 <div class="tile"><div class="k">Value if all matured today</div><div class="v">{money(k[5])}</div><div class="s">{pct((k[5] or 0) / k[1] - 1 if k[1] else None, True)} vs notional, excl. coupons</div></div>
+{model_tile}
 <div class="tile {'good' if ev[0] else ''}"><div class="k">Likely calls, next 30 days</div><div class="v">{ev[0]}</div><div class="s">cash coming back early</div></div>
 <div class="tile {'warn' if ev[1] else ''}"><div class="k">Coupons at risk</div><div class="v">{ev[1]}</div><div class="s">next 30 days</div></div>
 </div>""")
@@ -473,18 +490,21 @@ def notes_page(conn, query):
                n.status,
                (select string_agg(o.kind, ' + ' order by o.kind) from observation_dates o
                 where o.note_id = n.note_id and o.obs_date = (select min(x.obs_date) from observation_dates x
-                                                              where x.note_id = n.note_id and x.obs_date > %s))
+                                                              where x.note_id = n.note_id and x.obs_date > %s)),
+               {model}
         from notes n join issuers i using (issuer_id)
         left join note_daily_status s on s.note_id = n.note_id and s.run_date = %s
         where %s::date is null or n.trade_date <= %s::date   -- only notes in the book that night
-        order by s.cushion nulls last, n.cusip""", (d, d, d, d, d))
+        order by s.cushion nulls last, n.cusip""".replace("{model}",
+            "(select v.model_value from note_valuations v where v.note_id = n.note_id and v.run_date = s.run_date)"
+            if has_pricing(conn) else "null::numeric"), (d, d, d, d, d))
     pick_u = (query.get("u") or [""])[0]
     pick_t = (query.get("type") or [""])[0]
     underliers = sorted({r[3] for r in rows})
     types = sorted({r[2] for r in rows})
 
     trs = []
-    for (c, issuer, t, u, td, md, init, close, perf, cu, ccu, dc, pay, nxt, status, nxt_kind) in rows:
+    for (c, issuer, t, u, td, md, init, close, perf, cu, ccu, dc, pay, nxt, status, nxt_kind, model) in rows:
         text = " ".join(str(x) for x in (c, issuer, t, u)).lower()
         trs.append(f'<tr data-type="{esc(t)}" data-u="{esc(u)}" data-text="{esc(text)}" '
                    f'data-below="{1 if cu is not None and cu < 0 else 0}">'
@@ -499,6 +519,7 @@ def notes_page(conn, query):
                    + cell(pct(ccu, True) if ccu is not None else "—", ccu, "n")
                    + cell(pct(dc, True) if dc is not None else "—", dc, "n")
                    + cell(money(pay, True), pay, "n")
+                   + cell(money(model, True) if model is not None else "—", model, "n")
                    + cell(f'{nxt} <span class="note">{esc(nxt_kind)}</span>' if nxt else "—", nxt)
                    + cell(str(md), md) + "</tr>")
 
@@ -507,7 +528,7 @@ def notes_page(conn, query):
     uopts = '<option value="">All underliers</option>' + "".join(
         f'<option value="{esc(u)}"{" selected" if u == pick_u else ""}>{esc(u)}</option>' for u in underliers)
     head = ["CUSIP", "Issuer", "Type", "Linked to", "Start date", "Start level", "Close", "Since start", "Cushion",
-            "Coupon cushion", "Vs call", "Per $1,000", "Next check", "Matures"]
+            "Coupon cushion", "Vs call", "Per $1,000 at maturity", "Model value", "Next check", "Matures"]
     body = f"""<h1>Notes</h1>
 <p class="sub">{f"Values from the night of {d}." if d else "No nightly runs yet, so values are blank."}
 Click a column to sort. Click a CUSIP for the full picture.</p>
@@ -521,7 +542,7 @@ Click a column to sort. Click a CUSIP for the full picture.</p>
   <span id="count" class="note" style="margin:0 0 0 auto"></span>
 </form>
 <div class="scroll"><table id="notes" class="sortable"><thead><tr>
-{"".join(f'<th class="{"n" if 5 <= i <= 11 else ""}">{h}</th>' for i, h in enumerate(head))}
+{"".join(f'<th class="{"n" if 5 <= i <= 12 else ""}">{h}</th>' for i, h in enumerate(head))}
 </tr></thead><tbody>{"".join(trs)}</tbody></table></div></div>"""
     return page("Notes", body, "notes", NOTES_FILTER_JS)
 
@@ -655,6 +676,50 @@ PAYOFF_JS = """
 """
 
 
+def model_value_tile(val, cal):
+    if not val:
+        return ""
+    mv, err = val[0], val[1]
+    est = f"issuer's estimate at issue {money(cal[0], True)}" if cal and cal[0] is not None else "no estimate in the filing"
+    return (f'<div class="tile"><div class="k">Model value per $1,000</div><div class="v">{money(mv, True)}</div>'
+            f'<div class="s">{est}{f" · ±{float(err):.2f} (simulation)" if err else ""}</div></div>')
+
+
+def model_value_panel(n, val, vhist, cal, d):
+    if not val and not vhist:
+        return ""
+    parts = ['<div class="panel"><h2>Model value since the trade date</h2>'
+             '<p class="note">What the issuer\'s own pricing method would say each night, given the inputs below: '
+             'the note\'s expected payout, discounted at the issuer\'s rate. Not a price a dealer would pay. '
+             '<a href="/pricing">How it\'s priced</a></p>']
+    if vhist:
+        lv = [("Principal", 1000, "start")]
+        if cal and cal[0] is not None:
+            lv.append(("At issue", float(cal[0]), "call"))
+        parts.append(svg_price_chart([(r, v) for r, v in vhist], lv))
+    if val:
+        mv, err, delta, vega, vol, div, rate, spread, method = val
+        src = {"filing": "solved to match the issuer's estimate on the trade date",
+               "issuer average": "this issuer's average (the filing gave no usable estimate)",
+               "book average": "the book's average (the filing gave no usable estimate)"}.get(cal[2] if cal else "", "")
+        rows = [("Moves per 1% in " + esc(n["index_code"]), f"{money(delta, True)} per $1,000" if delta is not None else "—"),
+                ("Moves per volatility point", f"{money(vega, True)} per $1,000" if vega is not None else "—"),
+                ("Volatility (past year)", pct(vol, places=1)),
+                ("Dividend yield", pct(div, places=2)),
+                ("Treasury rate to maturity", pct(rate, places=2)),
+                ("Issuer spread over Treasuries", f"{float(spread) * 10000:,.0f} bp ({src})"),
+                ("Method", "exact (paid only at maturity)" if method == "exact" else
+                 f"Monte Carlo, {pricing_paths():,} paths (±{float(err):.2f})")]
+        parts.append('<dl class="terms">' + "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows) + "</dl>")
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def pricing_paths():
+    from .pricing import PATHS
+    return PATHS
+
+
 def note_page(conn, cusip, query):
     d, nights = date_param(query, conn)
     headers, found = db.query(conn, """
@@ -717,6 +782,17 @@ def note_page(conn, cusip, query):
                  + cell(f'<span class="t-{tone(cu)}">{pct(cu, True)}</span>' if cu is not None else "—", cu, "n")
                  + cell(money(v, True), v, "n") + "</tr>" for r, lv, p, cu, v in hist]
 
+    val = vhist = cal = None
+    if has_pricing(conn):
+        val = db.rows(conn, """select model_value, std_error, delta_1pct, vega_1pt, vol, div_yield, rate, spread, method
+                               from note_valuations where note_id = %s and run_date = %s""", (n["note_id"], d))
+        val = val[0] if val else None
+        vhist = db.rows(conn, """select run_date, model_value from note_valuations where note_id = %s
+                                 order by run_date""", (n["note_id"],))
+        cal = db.rows(conn, "select estimated_value, spread, source from note_calibrations where note_id = %s",
+                      (n["note_id"],))
+        cal = cal[0] if cal else None
+
     hold = db.rows(conn, """select a.household, v.name, h.notional from holdings h
                             join accounts a using (account_id) join advisors v using (advisor_id)
                             where h.note_id = %s order by h.notional desc""", (n["note_id"],))
@@ -751,6 +827,7 @@ def note_page(conn, cusip, query):
 <div class="tile"><div class="k">{esc(n["index_code"])} close</div><div class="v">{num(lv)}</div><div class="s">{pct(perf, True)} since start</div></div>
 <div class="tile {tone(cu)}"><div class="k">Cushion</div><div class="v">{pct(cu, True) if cu is not None else "None needed"}</div><div class="s">{"principal can't be lost at maturity" if cu is None else "room before principal is lost" if cu >= 0 else "past the protection level"}</div></div>
 <div class="tile"><div class="k">Per $1,000 if it matured today</div><div class="v">{money(pay, True)}</div><div class="s">{"principal only, coupons extra" if n["note_type"] == "income" else "principal plus any gain"}</div></div>
+{model_value_tile(val, cal)}
 {f'<div class="tile {tone(ccu)}"><div class="k">Above coupon barrier</div><div class="v">{pct(ccu, True)}</div><div class="s">negative on a coupon date: no coupon</div></div>' if ccu is not None else ""}
 {f'<div class="tile {"good" if dc >= 0 and call_soon else ""}"><div class="k">Vs call trigger</div><div class="v">{pct(dc, True)}</div><div class="s">{call_text}</div></div>' if dc is not None else ""}
 </div>"""
@@ -773,6 +850,7 @@ def note_page(conn, cusip, query):
 </div>
 <div class="grow">
 <div class="panel"><h2>{esc(n["index_code"])} since the trade date</h2>{svg_price_chart(points, levels)}</div>
+{model_value_panel(n, val, vhist, cal, d)}
 <div class="panel"><h2>Payout calculator</h2>
 <p class="note">What $1,000 pays at maturity for a given move in {esc(n["index_code"])} from its start{" (principal only; coupons are paid on top)" if n["note_type"] == "income" else ""}. Drag to try a move.</p>
 {svg_payoff(curve, today_move)}
@@ -783,6 +861,94 @@ def note_page(conn, cusip, query):
 <div class="panel"><h2>Holdings</h2>{table_html(["Household", "Advisor", "Notional"], hold_rows, numeric={2})}</div>
 </div></div>"""
     return page(cusip, body, "notes", PAYOFF_JS)
+
+
+# --- pricing -----------------------------------------------------------------
+
+def pricing_page(conn, query):
+    d, nights = date_param(query, conn)
+    intro = """<h1>Pricing</h1>
+<p class="sub">How the model values are worked out, and every input, so each number can be checked.</p>
+<div class="panel"><h2>The method</h2><div class="plain">
+<p>A structured note is a bond from the issuing bank with options built into its payout. Its <b>model value</b>
+is the expected payout under standard option-pricing assumptions (the underlier moves randomly with a constant
+volatility, drifting at the Treasury rate less dividends), discounted at the bank's own borrowing rate: the
+Treasury rate plus a <b>spread</b>.</p>
+<p>Notes paid only at maturity are valued exactly. Notes with coupons or calls are valued by simulating
+thousands of price paths and applying the note's rules on each check date.</p>
+<p>Each note's spread is solved once, on its trade date, so the model matches the <b>estimated value</b> the
+issuer published in its filing. From then on the model answers: what would the issuer's own method say today?</p>
+<p><b>Limits:</b> volatility is measured from the past year's prices, one number per underlier, where an issuer
+uses option-market (implied) volatility that varies by level and maturity. Dividend yields are approximate.
+The value is not a price a dealer would pay: bids are usually lower.</p></div></div>"""
+    if not has_pricing(conn) or d is None:
+        return page("Pricing", intro + '<div class="panel"><p class="empty">No model values yet. Run '
+                    '<span class="mono">python3 notes_desk.py pricing-setup</span> once.</p></div>', "pricing")
+
+    book = db.rows(conn, """select count(*), sum(v.model_value * h.notional / 1000), sum(h.notional)
+                            from note_valuations v join holdings h using (note_id) where v.run_date = %s""", (d,))[0]
+    live = db.scalar(conn, """select count(*) from note_daily_status s join notes n using (note_id)
+                              where s.run_date = %s and (n.closed_date is null or n.closed_date > %s)""", (d, d))
+    head = f"""<div class="tiles">
+<div class="tile"><div class="k">Model value of the book</div><div class="v">{money(book[1])}</div><div class="s">{pct((book[1] or 0) / book[2] - 1 if book[2] else None, True)} vs {money(book[2])} notional</div></div>
+<div class="tile {'warn' if book[0] < live else 'good'}"><div class="k">Notes priced</div><div class="v">{book[0]} of {live}</div><div class="s">{"some couldn't be priced: see the run log" if book[0] < live else "every note in the book"}</div></div>
+</div>"""
+
+    und = db.rows(conn, """select v.vol, v.div_yield, n.index_code, s.index_level
+                           from note_valuations v join notes n using (note_id)
+                           join note_daily_status s on s.note_id = v.note_id and s.run_date = v.run_date
+                           where v.run_date = %s""", (d,))
+    by_u = {}
+    for vol, div, code, close in und:
+        by_u[code] = (close, vol, div)
+    urows = ["<tr>" + cell(esc(c), c) + cell(num(cl), cl, "n") + cell(pct(v, places=1), v, "n")
+             + cell(pct(q, places=2), q, "n") + "</tr>" for c, (cl, v, q) in sorted(by_u.items())]
+    curve_day = db.scalar(conn, "select max(rate_date) from treasury_rates where rate_date <= %s", (d,))
+    crows = []
+    if curve_day:
+        for t, y in db.rows(conn, "select tenor_years, yield from treasury_rates where rate_date = %s order by 1",
+                            (curve_day,)):
+            label = f"{round(float(t) * 12)} mo" if float(t) < 1 else f"{float(t):g} yr"
+            crows.append("<tr>" + cell(label, float(t)) + cell(pct(y, places=2), y, "n") + "</tr>")
+
+    cal = db.rows(conn, """
+        select n.cusip, i.name, n.note_type, n.index_code, c.estimated_value, c.spread, c.source, c.vol,
+               v.model_value, v.delta_1pct, v.vega_1pt
+        from note_calibrations c join notes n using (note_id) join issuers i using (issuer_id)
+        left join note_valuations v on v.note_id = c.note_id and v.run_date = %s
+        where n.trade_date <= %s order by c.spread""", (d, d))
+    odd = 0
+    crow2 = []
+    for cusip, issuer, t, u, ev, sp, src, vol, mv, delta, vega in cal:
+        flag = float(sp) < -0.005 or float(sp) > 0.03
+        odd += flag
+        crow2.append("<tr>" + cell(f'<a class="mono" href="/note/{esc(cusip)}?date={d}">{esc(cusip)}</a>', cusip)
+                     + cell(esc(issuer.replace("The Bank of Nova Scotia", "Scotiabank").split()[0]), issuer)
+                     + cell(esc(TYPE_LABELS.get(t, t)), t) + cell(esc(u), u)
+                     + cell(money(ev, True) if ev is not None else "—", ev, "n")
+                     + cell(f'{float(sp) * 10000:,.0f}' + (f' {chip("check", "warn")}' if flag else ""), sp, "n")
+                     + cell(esc(src), src)
+                     + cell(money(mv, True) if mv is not None else "—", mv, "n")
+                     + cell(money(delta, True) if delta is not None else "—", delta, "n")
+                     + cell(money(vega, True) if vega is not None else "—", vega, "n") + "</tr>")
+
+    body = intro + f"""{night_picker("/pricing", d, nights)}{head}
+<div class="row"><div class="grow">
+<div class="panel"><h2>Underliers on {d}</h2><p class="note">Volatility: the past year's daily moves, annualized. Dividend yields: approximate, in <span class="mono">real_notes/dividend_yields.csv</span>.</p>
+{table_html(["Underlier", "Close", "Volatility", "Dividend yield"], urows, numeric={1, 2, 3})}</div>
+</div><div class="grow">
+<div class="panel"><h2>Treasury curve</h2><p class="note">Par yields{f" on {curve_day}" if curve_day else ""}, from the US Treasury (<span class="mono">feeds/rates_YEAR.csv</span>).</p>
+{table_html(["Maturity", "Yield"], crows, numeric={1}) if crows else '<p class="empty">No rates on file.</p>'}</div>
+</div></div>
+<div class="panel"><h2>Each note's spread and value</h2>
+<p class="note">Spread over Treasuries in basis points (100 bp = 1% a year), solved on the trade date to match the
+issuer's estimated value. A spread below −0.5% or above 3% is marked <b>check</b>: it usually means the volatility
+from past prices is far from what the issuer used{f" ({odd} notes here)" if odd else ""}. Delta and vega: how the
+value per $1,000 moves for a 1% move in the underlier and for one volatility point (latest full run).</p>
+<div class="scroll">{table_html(["CUSIP", "Issuer", "Type", "Linked to", "Estimated value at issue", "Spread (bp)",
+                                  "Spread from", "Model value", "Per 1% move", "Per vol point"], crow2,
+                                 numeric={4, 5, 7, 8, 9})}</div></div>"""
+    return page("Pricing", body, "pricing")
 
 
 # --- runs --------------------------------------------------------------------
@@ -879,6 +1045,7 @@ def static_links(text, d):
     text = re.sub(r'href="/notes(\?[^"]*)?"', 'href="notes.html"', text)
     text = re.sub(r'href="/reports/([^"]+)"', r'href="\1"', text)
     text = text.replace('href="/runs"', 'href="runs.html"')
+    text = re.sub(r'href="/pricing(\?[^"]*)?"', 'href="pricing.html"', text)
     text = text.replace(f'href="/?date={d}"', 'href="index.html"').replace('href="/"', 'href="index.html"')
     # Other nights aren't in the snapshot: show their dates without a link.
     return re.sub(r'<a href="/\?date=([0-9-]+)">([^<]*)</a>', r'\2', text)
@@ -902,7 +1069,7 @@ def export(run_date=None, out_dir=None):
             if old.is_file():
                 old.unlink()
         pages = {"index.html": re.sub(r"<title>[^<]*</title>", "<title>Notes Desk Snapshot</title>", dashboard(conn, q), count=1),
-                 "notes.html": notes_page(conn, q), "runs.html": runs_page(conn)}
+                 "notes.html": notes_page(conn, q), "pricing.html": pricing_page(conn, q), "runs.html": runs_page(conn)}
         for (cusip,) in db.rows(conn, "select cusip from notes order by cusip"):
             pages[f"note_{cusip}.html"] = note_page(conn, cusip, q)
         for name, text in pages.items():
@@ -986,6 +1153,8 @@ class Handler(BaseHTTPRequestHandler):
                 body = note_page(conn, cusip, query)
                 if body is None:
                     return self.error_page(404, "Note not found", f"There's no note with CUSIP {cusip}.")
+            elif path == "/pricing":
+                body = pricing_page(conn, query)
             elif path == "/runs":
                 body = runs_page(conn)
             else:

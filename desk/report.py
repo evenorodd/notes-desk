@@ -88,20 +88,23 @@ def morning_report(conn, run_date):
 
 NOTES_REPORT_COLUMNS = ["cusip", "issuer", "note_type", "underlier", "trade_date", "maturity_date",
                         "initial_level", "close", "since_start", "cushion", "coupon_cushion",
-                        "vs_call_trigger", "payout_per_1000", "next_check", "source_url"]
+                        "vs_call_trigger", "payout_per_1000", "model_value", "next_check", "source_url"]
 
 
 def notes_csv_rows(conn, run_date):
+    priced = db.scalar(conn, "select to_regclass('note_valuations') is not null")
+    model = ("(select v.model_value from note_valuations v where v.note_id = n.note_id and v.run_date = s.run_date)"
+             if priced else "null::numeric")
     return db.rows(conn, """
         select n.cusip, i.name, n.note_type, n.index_code, n.trade_date, n.maturity_date,
                n.initial_level, s.index_level, round(s.perf, 4), round(s.cushion, 4),
-               round(s.coupon_cushion, 4), round(s.dist_to_call, 4), s.payout_per_1000,
+               round(s.coupon_cushion, 4), round(s.dist_to_call, 4), s.payout_per_1000, {model},
                (select min(o.obs_date) from observation_dates o
                 where o.note_id = n.note_id and o.obs_date > %s),
                n.source_url
         from notes n join issuers i using (issuer_id)
         join note_daily_status s on s.note_id = n.note_id and s.run_date = %s
-        order by s.cushion nulls last""", (run_date, run_date))
+        order by s.cushion nulls last""".replace("{model}", model), (run_date, run_date))
 
 
 def write_reports(conn, run_date):

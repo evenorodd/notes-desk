@@ -1,0 +1,16 @@
+index_code,dividend_yield,note
+SPX,0.012,"approximate trailing yield; edit as needed"
+NDX,0.007,approximate
+RTY,0.013,approximate
+AAPL,0.004,approximate
+AMZN,0,pays no dividend
+COIN,0,pays no dividend
+DELL,0.016,approximate
+GNRC,0,pays no dividend
+HPE,0.025,approximate
+LRCX,0.009,approximate
+MSFT,0.007,approximate
+MU,0.004,approximate
+NVDA,0.0003,approximate
+PLTR,0,pays no dividend
+SPOT,0,pays no dividend

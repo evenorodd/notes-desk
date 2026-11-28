@@ -10,7 +10,8 @@ import re
 from . import (DeskError, HISTORY_CSV, NOTES_CSV, OBS_CSV, SQL_DIR, csvfiles, db, prices,
                schedule)
 
-SCHEMA_FILES = ["01_schema.sql", "02_reference_data.sql", "03_nightly_job.sql", "04_load_real_notes.sql"]
+SCHEMA_FILES = ["01_schema.sql", "02_reference_data.sql", "03_nightly_job.sql", "04_load_real_notes.sql",
+                "05_pricing.sql"]
 
 
 def _stage(conn, notes, observations):

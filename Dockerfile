@@ -2,7 +2,7 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 NOTES_DESK_DOCKER=1
 # tzdata: time-zone data for New York market hours (the slim image may not include it)
-RUN pip install --no-cache-dir "psycopg[binary]==3.2.3" "tzdata==2025.2"
+RUN pip install --no-cache-dir "psycopg[binary]==3.2.3" "tzdata==2025.2" "numpy==2.1.3"
 WORKDIR /app
 COPY . .
 EXPOSE 8000

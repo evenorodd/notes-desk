@@ -60,6 +60,25 @@ def main(argv=None):
     s.add_argument("--fetch", action="store_true",
                    help="download the closes first if feeds/closes_DATE.csv doesn't exist yet")
 
+    s = sub.add_parser("price", help="model value of every note for a night (normally done by nightly)",
+                       description="Values every note in the book on a night that has already run: the "
+                                   "expected payout under standard option-pricing assumptions, discounted at "
+                                   "the issuer's rate. Each note is calibrated once to the estimated value "
+                                   "in its filing. Needs numpy, the rate files and a year of history "
+                                   "(pricing-setup).")
+    s.add_argument("date", nargs="?", type=_date, help="the night (default: the latest)")
+    s.add_argument("--all", action="store_true", help="every night that has run")
+    s = sub.add_parser("fetch-rates", help="download Treasury yields into feeds/rates_YEAR.csv")
+    s.add_argument("years", nargs="+", type=int)
+    s = sub.add_parser("fetch-history", help="download a year of closes into feeds/history_YEAR.csv (for volatility)")
+    s.add_argument("year", type=int)
+    s = sub.add_parser("pricing-setup", help="first time: history, rates, then model values for every night",
+                       description="Downloads a year of price history before the first trade date and the "
+                                   "Treasury rates since then, then prices every night that has run. Run it "
+                                   "once; after that, nightly and catch-up price each night themselves.")
+    s.add_argument("--history-year", type=int, help="the year of history to download (default: the year "
+                                                    "before the first trade date)")
+
     sub.add_parser("catch-up", help="fetch and run every trading night since the last successful run (for schedules)",
                    description="Downloads the closes since the last night that ran successfully and runs each "
                                "trading night in order. Weekends and holidays have no closes, so they're skipped, "
@@ -116,6 +135,18 @@ def main(argv=None):
         elif args.command == "nightly":
             from .nightly import run
             run(args.date, args.fetch)
+        elif args.command == "price":
+            from .valuation import price_command
+            price_command(args.date, args.all)
+        elif args.command == "fetch-rates":
+            from .rates import fetch_rates
+            fetch_rates(args.years)
+        elif args.command == "fetch-history":
+            from .rates import fetch_history
+            fetch_history(args.year)
+        elif args.command == "pricing-setup":
+            from .valuation import setup_inputs
+            setup_inputs(args.history_year)
         elif args.command == "catch-up":
             from .nightly import catch_up
             catch_up()

@@ -65,6 +65,46 @@ def what_if():
         conn.close()
 
 
+def payout_rules_match(conn):
+    """The pricing code (desk/pricing.py) keeps its own copy of the payout
+    rules, so it can work on thousands of simulated prices at once. Checks
+    that copy against the database's note_payout_per_1000 for every note in
+    the database (the real ones and the test notes), at levels from 20% to
+    220% of the start and just either side of every barrier, buffer and cap."""
+    from . import pricing
+    print("\nPricing's payout rules against the database's:")
+    if not pricing.available():
+        print("Skipped: numpy isn't installed.")
+        return True
+    import numpy as np
+    cols = [r[0] for r in db.rows(conn, """select column_name from information_schema.columns
+                                            where table_name = 'notes' order by ordinal_position""")]
+    notes = [dict(zip(cols, r)) for r in db.rows(conn, f"select {', '.join(cols)} from notes order by cusip")]
+    worst, checked, bad = 0.0, 0, []
+    for n in notes:
+        start = float(n["initial_level"])
+        moves = list(np.linspace(0.2, 2.2, 201)) + [k * f for k in pricing.kinks(n) for f in (0.9999, 1, 1.0001)]
+        levels = [round(start * m, 4) for m in moves]
+        sql = [float(v) for (v,) in db.rows(conn, """
+            select note_payout_per_1000(n, l) from notes n
+            cross join lateral unnest(%s::numeric[]) with ordinality u(l, i)
+            where n.note_id = %s order by i""", (levels, n["note_id"]))]
+        py = np.round(pricing.payout_per_1000(n, levels), 2)
+        diff = np.abs(py - np.array(sql))
+        checked += len(levels)
+        worst = max(worst, float(diff.max()))
+        if diff.max() > 0.011:                 # a cent of rounding is fine
+            i = int(diff.argmax())
+            bad.append(f"{n['cusip']} at {levels[i]}: pricing pays {py[i]:.2f}, the database {sql[i]:.2f}")
+    if bad:
+        print(f"FAILED: {len(bad)} of {len(notes)} notes disagree:")
+        for line in bad[:10]:
+            print("  " + line)
+        return False
+    print(f"All {len(notes)} notes match at {checked:,} levels (largest difference ${worst:.2f}).")
+    return True
+
+
 def run_tests():
     print("Unit tests (no database):")
     suite = unittest.defaultTestLoader.discover(str(PROJECT_DIR / "tests"), pattern="test_*.py",
@@ -79,7 +119,7 @@ def run_tests():
         db.run_file(conn, PROJECT_DIR / "sql" / "03_nightly_job.sql")
         db.run_file(conn, PROJECT_DIR / "tests" / "test_nightly.sql")
         print("All database tests passed.")
-        db_ok = True
+        db_ok = payout_rules_match(conn)
     except Exception as e:
         if not db.is_db_error(e):
             raise
